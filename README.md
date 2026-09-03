@@ -2,7 +2,7 @@
 Template for team repo
 
 <p align="center">
-<img src="./images/thisismyteam.png" width="50%">
+<img src="./images/group-photo-5x1.jpg" width="50%">
 </p>
 <p align="center">
 Replace this image with your team's photo here
