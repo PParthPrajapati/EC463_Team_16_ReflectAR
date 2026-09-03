@@ -5,11 +5,10 @@ Template for team repo
 <img src="./images/group-photo-5x1.jpg" width="50%">
 </p>
 <p align="center">
-Replace this image with your team's photo here
 </p>
 
 ## Team links
-- [Team Google Drive]()
+- [Team Google Drive](https://drive.google.com/drive/folders/1N07-bnaPcyUIBm_3vJlsJzrRu5GT7IsA)
 - [Team Board]()
 
 ## Organization of this repo
