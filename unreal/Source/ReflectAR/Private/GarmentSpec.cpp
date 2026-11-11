@@ -12,36 +12,32 @@ namespace ReflectAR
 		{
 			TArray<FGarmentSpec> A;
 			auto Add = [&A](TFunctionRef<void(FGarmentSpec&)> Init) { FGarmentSpec S; Init(S); A.Add(S); };
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Classic Tee"); g.ColorA = C(TEXT("EDEBE6")); g.Pattern = EPattern::Knit; g.Sleeve = 0.34f;
-				g.Hem = -0.12f; g.Ease = 0.018f; g.CuffFlare = 0.006f; g.Fit = 0.75f; g.Smooth = 0.2f; });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("V-Neck Tee"); g.ColorA = C(TEXT("2B3A55")); g.Pattern = EPattern::Knit; g.Sleeve = 0.32f;
-				g.Hem = -0.12f; g.Ease = 0.014f; g.Neck = ENeckline::VNeck; g.Fit = 0.6f; g.Smooth = 0.2f; });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Breton Long-Sleeve"); g.ColorA = C(TEXT("F4F1E8")); g.ColorB = C(TEXT("1F2D5A"));
-				g.Pattern = EPattern::Stripes; g.Tile = 0.07f; g.Sleeve = 0.97f; g.Hem = -0.12f; g.Ease = 0.012f; g.Fit = 0.45f; g.Smooth = 0.24f; g.Bump = 0.5f; });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Polo Shirt"); g.ColorA = C(TEXT("1D6B4E")); g.Pattern = EPattern::Pique; g.Sleeve = 0.3f;
-				g.Hem = -0.14f; g.Ease = 0.016f; g.Neck = ENeckline::Collar; g.Bend = 1.2e-2f; g.Placket = 1; g.PlacketLen = 0.28f;
-				g.Fit = 0.7f; g.Smooth = 0.26f; g.Trim = C(TEXT("E9E5DA")); });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Flannel Shirt"); g.ColorA = C(TEXT("A3262A")); g.ColorB = C(TEXT("1B1B1B")); g.Pattern = EPattern::Plaid;
-				g.Tile = 0.16f; g.Sleeve = 0.97f; g.Hem = -0.2f; g.Ease = 0.026f; g.Neck = ENeckline::Collar; g.Bend = 1e-2f; g.Drape = 1.2f; g.Placket = 1;
-				g.Fit = 0.85f; g.Smooth = 0.16f; g.Bump = 0.8f; g.Trim = C(TEXT("EDE6D6")); });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Pullover Hoodie"); g.ColorA = C(TEXT("8B8F96")); g.Pattern = EPattern::Knit; g.Sleeve = 0.98f;
-				g.Hem = -0.16f; g.Ease = 0.035f; g.SleeveEase = 0.016f; g.Neck = ENeckline::HoodDown;
-				g.Bend = 6e-3f; g.Compress = 8e-4f; g.Density = 1.4f; g.Drape = 1.3f;
-				g.Fit = 0.95f; g.HemBand = 1.f; g.bCuffBand = true; g.Smooth = 0.1f; g.Bump = 0.7f; });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Bomber Jacket"); g.ColorA = C(TEXT("4B5B3A")); g.Pattern = EPattern::Solid; g.Sleeve = 0.98f;
-				g.Hem = -0.03f; g.Ease = 0.04f; g.SleeveEase = 0.02f; g.Neck = ENeckline::Collar;
-				g.Bend = 4e-3f; g.Compress = 3e-4f; g.Density = 1.5f; g.Sheen = 0.45f; g.Placket = 2;
-				g.Fit = 0.8f; g.HemBand = 1.f; g.bCuffBand = true; g.Smooth = 0.5f; g.Bump = 0.3f; g.Trim = C(TEXT("2A3024")); g.Metal = C(TEXT("8E9096")); });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Denim Jacket"); g.ColorA = C(TEXT("41628C")); g.Pattern = EPattern::Denim; g.Sleeve = 0.98f;
-				g.Hem = -0.04f; g.Ease = 0.035f; g.SleeveEase = 0.018f; g.Neck = ENeckline::Collar;
-				g.Bend = 1.5e-3f; g.Compress = 1e-4f; g.Density = 1.8f; g.Drape = 0.7f; g.Sheen = 0.1f; g.Placket = 1;
-				g.Fit = 0.7f; g.Smooth = 0.2f; g.Bump = 1.2f; g.bMetalButtons = true; g.Metal = C(TEXT("B08A57")); });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Puffer Jacket"); g.ColorA = C(TEXT("1E1E24")); g.Pattern = EPattern::Quilt; g.Tile = 0.12f; g.Sleeve = 0.98f;
-				g.Hem = -0.06f; g.Ease = 0.038f; g.SleeveEase = 0.022f; g.Quilt = 0.009f; g.Neck = ENeckline::Collar;
-				g.Bend = 8e-4f; g.Compress = 5e-5f; g.Density = 1.2f; g.Drape = 0.5f; g.Sheen = 0.6f; g.Placket = 2;
-				g.Fit = 0.9f; g.HemBand = 0.6f; g.bCuffBand = true; g.Smooth = 0.58f; g.Bump = 0.4f; g.Trim = C(TEXT("121216")); g.Metal = C(TEXT("5E6066")); });
-			Add([](FGarmentSpec& g) { g.Name = TEXT("Ribbed Tank"); g.ColorA = C(TEXT("E0533D")); g.Pattern = EPattern::Rib; g.Tile = 0.12f; g.Sleeve = 0.f;
-				g.Hem = -0.1f; g.Ease = 0.006f; g.bTank = true; g.Neck = ENeckline::Scoop; g.Fit = 0.15f; g.Smooth = 0.24f; });
+			// Compliances are per second squared: at 8 substeps of a 60 Hz frame, 4e-6 is "about as
+			// stiff as the constraint itself". Compress < Bend, so slack folds rather than shrinks.
+			Add([](FGarmentSpec& g) { g.Name = TEXT("Heavyweight Tee"); g.Asset = TEXT("heavyweight_tee"); g.Detail = TEXT("Boxy fit  ·  240 gsm cotton jersey");
+				g.ColorA = C(TEXT("EDEBE6")); g.Pattern = EPattern::Knit; g.Sleeve = 0.36f; g.Hem = -0.16f;
+				g.Ease = 0.034f; g.SleeveEase = 0.024f; g.CuffFlare = 0.004f; g.Fit = 1.f; g.Slack = 0.015f; g.RibCollar = 0.02f;
+				g.Compress = 6e-6f; g.Bend = 4e-5f; g.Damping = 0.06f; g.Smooth = 0.2f; });
+			Add([](FGarmentSpec& g) { g.Name = TEXT("Crewneck Sweatshirt"); g.Asset = TEXT("crewneck_sweatshirt"); g.Detail = TEXT("Relaxed fit  ·  brushed cotton fleece");
+				g.ColorA = C(TEXT("8D9199")); g.Pattern = EPattern::Knit; g.Sleeve = 0.98f; g.Hem = -0.1f;
+				g.Ease = 0.045f; g.SleeveEase = 0.028f; g.Fit = 1.f; g.HemBand = 1.f; g.bCuffBand = true; g.Slack = 0.05f;
+				g.RibCollar = 0.024f; g.RibHem = 0.06f; g.RibCuff = 0.06f;
+				g.Compress = 1e-5f; g.Bend = 1.6e-5f; g.Damping = 0.08f; g.Density = 1.15f; g.Smooth = 0.1f; g.Bump = 0.7f; });
+			Add([](FGarmentSpec& g) { g.Name = TEXT("Satin Blouse"); g.Asset = TEXT("satin_blouse"); g.Detail = TEXT("Fluid drape  ·  washed silk satin");
+				g.ColorA = C(TEXT("6E1F33")); g.Pattern = EPattern::Solid; g.Sleeve = 0.95f; g.Hem = -0.2f; g.Neck = ENeckline::VNeck;
+				g.Ease = 0.04f; g.SleeveEase = 0.022f; g.CuffFlare = 0.012f; g.Fit = 1.f; g.Drape = 1.3f; g.Slack = 0.06f;
+				g.Compress = 2e-6f; g.Bend = 4e-4f; g.Damping = 0.04f; g.Sheen = 0.7f; g.Smooth = 0.62f; g.Bump = 0.25f; });
+			Add([](FGarmentSpec& g) { g.Name = TEXT("Flannel Overshirt"); g.Asset = TEXT("flannel_overshirt"); g.Detail = TEXT("Straight fit  ·  brushed cotton twill");
+				g.ColorA = C(TEXT("A3262A")); g.ColorB = C(TEXT("1B1B1B")); g.Pattern = EPattern::Plaid; g.Tile = 0.16f;
+				g.Sleeve = 0.97f; g.Hem = -0.24f; g.Neck = ENeckline::Collar; g.Placket = 1;
+				g.Ease = 0.045f; g.SleeveEase = 0.026f; g.CuffFlare = 0.004f; g.Fit = 1.f;
+				g.Compress = 6e-6f; g.Bend = 2.5e-5f; g.Damping = 0.06f; g.Smooth = 0.16f; g.Bump = 0.8f; g.Trim = C(TEXT("EDE6D6")); });
+			Add([](FGarmentSpec& g) { g.Name = TEXT("Bomber Jacket"); g.Asset = TEXT("bomber_jacket"); g.Detail = TEXT("Ribbed trims  ·  matte nylon twill");
+				g.ColorA = C(TEXT("4B5B3A")); g.Pattern = EPattern::Solid; g.Sleeve = 0.98f; g.Hem = -0.04f; g.Neck = ENeckline::Collar; g.Placket = 2;
+				g.Ease = 0.055f; g.SleeveEase = 0.034f; g.Fit = 1.f; g.HemBand = 1.f; g.bCuffBand = true; g.Slack = 0.05f;
+				g.RibCollar = 0.1f; g.RibHem = 0.06f; g.RibCuff = 0.06f; g.RibColor = C(TEXT("2B3322"));
+				g.Compress = 4e-6f; g.Bend = 8e-6f; g.Damping = 0.08f; g.Density = 1.2f; g.Sheen = 0.45f; g.Smooth = 0.5f; g.Bump = 0.3f;
+				g.Trim = C(TEXT("2A3024")); g.Metal = C(TEXT("8E9096")); });
 			return A;
 		}();
 		return All;
@@ -50,6 +46,7 @@ namespace ReflectAR
 	static float Rep(float x) { return x - FMath::FloorToFloat(x); }
 	static float Perlin(float x, float y) { return FMath::PerlinNoise2D(FVector2D(x, y)) * 0.5f + 0.5f; }   // ~[0, 1] like Unity's
 
+	// Repeats per tile are powers of two: anything else beats against the mip chain (moire).
 	void SamplePattern(const FGarmentSpec& S, float u, float v, FLinearColor& c, float& h)
 	{
 		const int x = FMath::FloorToInt(u * 256.f), y = FMath::FloorToInt(v * 256.f);
@@ -59,7 +56,7 @@ namespace ReflectAR
 		{
 		case EPattern::Stripes:
 			c = v < 0.5f ? S.ColorA : S.ColorB;
-			h = 0.5f + 0.5f * FMath::Sin(u * PI * 2.f * 96.f) * FMath::Sin(v * PI * 2.f * 64.f);   // fine jersey
+			h = 0.5f + 0.5f * FMath::Sin(u * PI * 2.f * 64.f) * FMath::Sin(v * PI * 2.f * 64.f);   // fine jersey
 			break;
 		case EPattern::Plaid:
 		{
@@ -80,7 +77,7 @@ namespace ReflectAR
 		case EPattern::Denim:
 		{
 			// 3/1 twill: diagonal wales of white weft over indigo warp, slight slub
-			const float w = Rep((x + y) / 5.f);
+			const float w = Rep((x + y) / 4.f);
 			const float Slub = Perlin(u * 6.f, v * 90.f) * 0.25f + Perlin(u * 60.f, v * 60.f) * 0.1f;
 			c = FMath::Lerp(S.ColorA * 0.8f, FMath::Lerp(S.ColorA, FLinearColor::White, 0.35f), (w < 0.35f ? 0.55f : 0.1f) + Slub);
 			h = w < 0.35f ? 0.75f : 0.35f;
@@ -88,14 +85,14 @@ namespace ReflectAR
 		}
 		case EPattern::Knit:
 		{
-			const float cu = Rep(u * 64.f), cv = Rep(v * 96.f + (cu < 0.5f ? cu : 1.f - cu));
+			const float cu = Rep(u * 64.f), cv = Rep(v * 64.f + (cu < 0.5f ? cu : 1.f - cu));
 			h = 0.5f + 0.5f * FMath::Sin(cv * PI * 2.f) * FMath::Sin(cu * PI);
 			c = S.ColorA * (0.92f + 0.08f * h);
 			break;
 		}
 		case EPattern::Pique:
 		{
-			const float cu = Rep(u * 48.f) - 0.5f, cv = Rep(v * 48.f) - 0.5f;
+			const float cu = Rep(u * 32.f) - 0.5f, cv = Rep(v * 32.f) - 0.5f;
 			h = 1.f - Clamp01((cu * cu + cv * cv) * 5.f);
 			c = S.ColorA * (0.88f + 0.12f * h);
 			break;
@@ -147,6 +144,17 @@ namespace ReflectAR
 		}
 		T->UpdateResource();
 		return T;
+	}
+
+	const FFabricMaps& FFabricMaps::GetRib(const FGarmentSpec& S)
+	{
+		FGarmentSpec R = S;
+		R.Name = S.Name + TEXT(" Rib");
+		R.Pattern = EPattern::Rib;
+		if (S.RibColor.R >= 0.f) R.ColorA = S.RibColor;
+		R.Bump = 1.4f;
+		R.Smooth = FMath::Min(S.Smooth, 0.2f);
+		return Get(R);
 	}
 
 	const FFabricMaps& FFabricMaps::Get(const FGarmentSpec& S)

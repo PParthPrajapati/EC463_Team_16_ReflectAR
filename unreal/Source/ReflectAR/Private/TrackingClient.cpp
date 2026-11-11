@@ -110,9 +110,12 @@ namespace ReflectAR
 		O->TryGetStringArrayField(TEXT("events"), F.Events);
 		F.FistProgress = float(Num(O, TEXT("fist_progress"), 0));
 		O->TryGetStringField(TEXT("fist_hand"), F.FistHand);
+		F.SwipeProgress = float(Num(O, TEXT("swipe_progress"), 0));
+		O->TryGetStringField(TEXT("swipe_hand"), F.SwipeHand);
 		Floats(O, TEXT("joints"), F.Joints); Floats(O, TEXT("vel"), F.Vel); Floats(O, TEXT("vis"), F.Vis);
 		Floats(O, TEXT("eye"), F.Eye); Floats(O, TEXT("eye_vel"), F.EyeVel);
 		const TSharedPtr<FJsonObject>* Sub;
+		if (O->TryGetObjectField(TEXT("shape"), Sub)) { Floats(*Sub, TEXT("a"), F.ShapeA); Floats(*Sub, TEXT("d"), F.ShapeD); Floats(*Sub, TEXT("gz"), F.ShapeGZ); Floats(*Sub, TEXT("sh"), F.ShapeSh); }
 		if (O->TryGetObjectField(TEXT("cam"), Sub))
 		{
 			FCamInfo& C = F.Cam;

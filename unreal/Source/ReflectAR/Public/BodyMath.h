@@ -39,6 +39,9 @@ namespace ReflectAR
 		t = -2.f * t * t * t + 3.f * t * t;
 		return to * t + from * (1.f - t);
 	}
+	/** 0 below a, 1 above b, smooth in between (GLSL's smoothstep; SmoothStep above is Unity's and
+	 * blends from its first argument to its second). */
+	inline float Ramp(float a, float b, float x) { return SmoothStep(0.f, 1.f, (x - a) / (b - a)); }
 	inline float Dot(const V3& a, const V3& b) { return V3::DotProduct(a, b); }
 	inline V3 Cross(const V3& a, const V3& b) { return V3::CrossProduct(a, b); }
 	inline V3 LerpV(const V3& a, const V3& b, float t) { return a + (b - a) * Clamp01(t); }

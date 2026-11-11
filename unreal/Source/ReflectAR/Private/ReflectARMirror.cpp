@@ -14,10 +14,20 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Materials/MaterialParameterCollectionInstance.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
+#include "RenderingThread.h"
+#include "HAL/PlatformFileManager.h"
+#include "Misc/Paths.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "UnrealClient.h"
 
 using namespace ReflectAR;
 
 static const TCHAR* MatDir = TEXT("/Game/ReflectAR/");
+static constexpr float RibTile = 0.08f;          // m per repeat of the rib texture (16 ribs)
+static constexpr int RibSectionIndex = FGarmentTrims::NumSections;
 
 AReflectARMirror::AReflectARMirror()
 {
@@ -126,6 +136,7 @@ void AReflectARMirror::BeginPlay()
 
 void AReflectARMirror::EndPlay(const EEndPlayReason::Type Reason)
 {
+	SetLatencyTest(false);
 	Tracking.Reset();
 	Super::EndPlay(Reason);
 }
@@ -167,7 +178,14 @@ void AReflectARMirror::CreateGarments()
 				Set[k]->SetScalarParameterValue(TEXT("Metallic"), k == 1 ? 0.f : 1.f);
 				Set[k]->SetScalarParameterValue(TEXT("Roughness"), k == 1 ? 0.45f : 0.25f);
 			}
-			for (int k = 0; k < 3; k++) Keep.Add(Set[k]);
+			const FFabricMaps& Rib = FFabricMaps::GetRib(Sp);
+			Set[3] = UMaterialInstanceDynamic::Create(f == 0 ? Fabric : FabricFade, this);
+			Set[3]->SetTextureParameterValue(TEXT("BaseColorMap"), Rib.BaseColor.Get());
+			Set[3]->SetTextureParameterValue(TEXT("NormalMap"), Rib.Normal.Get());
+			Set[3]->SetTextureParameterValue(TEXT("MaskMap"), Rib.Mask.Get());
+			Set[3]->SetScalarParameterValue(TEXT("Tile"), 1.f / RibTile);
+			Set[3]->SetScalarParameterValue(TEXT("Sheen"), 0.2f);
+			for (int k = 0; k < 4; k++) Keep.Add(Set[k]);
 		}
 	}
 }
@@ -188,6 +206,7 @@ void AReflectARMirror::HandleInput()
 		if (Pressed(EKeys::C)) bCubeTest = !bCubeTest;
 		if (Pressed(EKeys::P)) { bPredict = !bPredict; Toast(bPredict ? TEXT("Prediction on") : TEXT("Prediction off")); }
 		if (Pressed(EKeys::O)) { bTrimToMask = !bTrimToMask; Toast(bTrimToMask ? TEXT("Occlusion: person mask") : TEXT("Occlusion: capsules only")); }
+		if (Pressed(EKeys::L)) SetLatencyTest(!bLatencyTest);
 		if (Pressed(EKeys::LeftBracket)) LeadMs -= 5.f;
 		if (Pressed(EKeys::RightBracket)) LeadMs += 5.f;
 		if (Pressed(EKeys::Escape)) UKismetSystemLibrary::QuitGame(this, PC, EQuitPreference::Quit, false);
@@ -206,7 +225,8 @@ void AReflectARMirror::Browse(int D)
 	Garments[Current].Mesh->SetVisibility(false);
 	Garments[Current].Trims->SetVisibility(false);
 	Current = (Current + D + Garments.Num()) % Garments.Num();
-	Garments[Current].Sim->ResetCloth();
+	LastBrowseDir = D;
+	LastBrowseTime = FTrackingClient::Now();
 }
 
 void AReflectARMirror::Select()
@@ -218,6 +238,109 @@ void AReflectARMirror::Select()
 UTexture2D* AReflectARMirror::Swatch(int32 I) const
 {
 	return FFabricMaps::Get(GarmentCatalog()[I]).BaseColor.Get();
+}
+
+// ======================================================================== unattended checks
+// -ReflectARShots=<seconds> saves a screenshot (UI included) to Saved/Screenshots at that interval,
+// -ReflectARCycle=<seconds> steps through the garments, -ReflectARMirrorMode starts in Mirror mode,
+// -ReflectARProxy shows the body stand-ins.
+void AReflectARMirror::DevTick(double NowT)
+{
+	if (DevShotEvery < 0.f)
+	{
+		DevShotEvery = DevCycleEvery = 0.f;
+		FParse::Value(FCommandLine::Get(), TEXT("ReflectARShots="), DevShotEvery);
+		FParse::Value(FCommandLine::Get(), TEXT("ReflectARCycle="), DevCycleEvery);
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARMirrorMode"))) Mode = EMirrorViewMode::Mirror;
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARProxy"))) bShowProxy = true;
+		DevNextShot = NowT + DevShotEvery; DevNextCycle = NowT + DevCycleEvery;
+	}
+	if (DevCycleEvery > 0.f && NowT >= DevNextCycle) { Browse(+1); DevNextCycle = NowT + DevCycleEvery; }
+	if (DevShotEvery > 0.f && NowT >= DevNextShot)
+	{
+		const FString Name = FString::Printf(TEXT("%s/shot_%03d_%s.png"), *(FPaths::ProjectSavedDir() / TEXT("Screenshots")), DevShots++,
+			*GarmentCatalog()[Current].Name.Replace(TEXT(" "), TEXT("")));
+		FScreenshotRequest::RequestScreenshot(Name, true, false);
+		DevNextShot = NowT + DevShotEvery;
+	}
+}
+
+// ======================================================================== latency test
+/** Rows written from the render thread when a frame is presented; times on the local clock (s). */
+struct AReflectARMirror::FLatencyLog
+{
+	FCriticalSection Lock;
+	TUniquePtr<IFileHandle> File;
+	int32 RenderSeq = -1, LoggedSeq = -1;           // render thread only
+	double Arrive = 0, Poll = 0, Tick = 0, Offset = 0;
+
+	void Write(const FString& Line)
+	{
+		const FTCHARToUTF8 U(*Line);
+		FScopeLock L(&Lock);
+		if (File) File->Write(reinterpret_cast<const uint8*>(U.Get()), U.Length());
+	}
+};
+
+void AReflectARMirror::SetLatencyTest(bool bOn)
+{
+	if (bOn == bLatencyTest && (bOn == LatLog.IsValid())) return;
+	bLatencyTest = bOn;
+	if (bOn)
+	{
+		const FString Dir = FPaths::ProjectSavedDir() / TEXT("ReflectAR");
+		IPlatformFile& PF = FPlatformFileManager::Get().GetPlatformFile();
+		PF.CreateDirectoryTree(*Dir);
+		const FString Path = Dir / TEXT("latency_unreal.csv");
+		LatLog = MakeShared<FLatencyLog, ESPMode::ThreadSafe>();
+		LatLog->File.Reset(PF.OpenWrite(*Path));
+		// times: local clock (s); perception clock = local - clock_offset
+		LatLog->Write(TEXT("seq,t_arrive_local,t_poll_local,t_tick_local,t_present_local,clock_offset\n"));
+		LatLastSeq = -1;
+		bPredictBeforeTest = bPredict;
+		bPredict = false;                               // measure the raw pipeline, not the prediction
+		if (FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
+		{
+			TWeakPtr<FLatencyLog, ESPMode::ThreadSafe> Weak = LatLog;
+			PresentHandle = FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().AddLambda(
+				[Weak](SWindow&, ISlateViewportProvider&)
+				{
+					TSharedPtr<FLatencyLog, ESPMode::ThreadSafe> Log = Weak.Pin();
+					if (!Log || Log->RenderSeq < 0 || Log->RenderSeq == Log->LoggedSeq) return;
+					Log->LoggedSeq = Log->RenderSeq;
+					Log->Write(FString::Printf(TEXT("%d,%.6f,%.6f,%.6f,%.6f,%.6f\n"), Log->RenderSeq, Log->Arrive,
+						Log->Poll, Log->Tick, FTrackingClient::Now(), Log->Offset));
+				});
+		}
+		Toast(FString::Printf(TEXT("Latency test on: prediction off, logging to %s"), *Path));
+		UE_LOG(LogTemp, Log, TEXT("ReflectAR latency test: logging to %s"), *Path);
+	}
+	else
+	{
+		if (PresentHandle.IsValid() && FSlateApplication::IsInitialized() && FSlateApplication::Get().GetRenderer())
+			FSlateApplication::Get().GetRenderer()->OnBackBufferReadyToPresent().Remove(PresentHandle);
+		PresentHandle.Reset();
+		FlushRenderingCommands();                       // no present callback still holds the log
+		LatLog.Reset();
+		bPredict = bPredictBeforeTest;
+		Toast(TEXT("Latency test off"));
+	}
+}
+
+void AReflectARMirror::LatencyTick()
+{
+	const TSharedPtr<FTrackingFrame> F = Tracking->Latest;
+	if (!LatLog || !F.IsValid() || F->Seq == LatLastSeq) return;
+	LatLastSeq = F->Seq;
+	// handed to the render thread in order, so the next present after it shows this frame's pose
+	const int32 Seq = F->Seq;
+	const double Arrive = F->Arrival, Poll = Tracking->LastFrameTime, TickT = FTrackingClient::Now();
+	const double Offset = Tracking->PerceptionClockOffset();
+	TSharedPtr<FLatencyLog, ESPMode::ThreadSafe> Log = LatLog;
+	ENQUEUE_RENDER_COMMAND(ReflectARLatencyMark)([Log, Seq, Arrive, Poll, TickT, Offset](FRHICommandListImmediate&)
+	{
+		Log->RenderSeq = Seq; Log->Arrive = Arrive; Log->Poll = Poll; Log->Tick = TickT; Log->Offset = Offset;
+	});
 }
 
 // ======================================================================== mesh upload
@@ -250,13 +373,14 @@ void AReflectARMirror::UploadGarment(FGarmentSlot& G)
 	{
 		G.Mesh->ClearAllMeshSections();
 		G.Trims->ClearAllMeshSections();
-		G.bHasTrims = Sim.Trims.IsValid();
+		G.bHasTrims = Sim.Trims.IsValid() || Sim.RibSection.Tris.Num() > 0;
 		G.bFading = -1;
 	}
 	Upload(G.Mesh, 0, Sim.BodySection, bNew);
-	if (G.bHasTrims)
+	if (Sim.Trims.IsValid())
 		for (int s = 0; s < FGarmentTrims::NumSections; s++)
 			if (Sim.Trims->Sections[s].Tris.Num() > 0) Upload(G.Trims, s, Sim.Trims->Sections[s], bNew);
+	if (Sim.RibSection.Tris.Num() > 0) Upload(G.Trims, RibSectionIndex, Sim.RibSection, bNew);
 }
 
 /** Opaque while fully shown (proper depth, shadows); a translucent copy while fading or dimmed. */
@@ -268,7 +392,7 @@ void AReflectARMirror::ApplyMaterials(FGarmentSlot& G, float Alpha)
 	if (G.bFading == int(bFade)) return;
 	UMaterialInstanceDynamic** Set = bFade ? G.Fade : G.Opaque;
 	G.Mesh->SetMaterial(0, Set[0]);
-	for (int s = 0; s < 3; s++) G.Trims->SetMaterial(s, Set[s]);
+	for (int s = 0; s < 4; s++) G.Trims->SetMaterial(s, Set[s]);
 	G.bFading = int(bFade);
 }
 
@@ -325,10 +449,14 @@ void AReflectARMirror::Tick(float Dt)
 	LogStats(Dt);
 	Tracking->Poll();
 	HandleInput();
+	if (bLatencyTest) LatencyTick();
 	const double NowT = FTrackingClient::Now();
 	const TSharedPtr<FTrackingFrame> F = Tracking->Latest;
 	const bool bFresh = Tracking->IsConnected() && F.IsValid() && NowT - Tracking->LastFrameTime < 0.5;
 	bTracked = bFresh && F->bTracked;
+	BrowseDrag = bTracked ? FMath::Clamp(F->SwipeProgress, -1.f, 1.f) : 0.f;
+	BrowseHand = bTracked ? F->SwipeHand : FString();
+	DevTick(NowT);
 	if (GEngine) GEngine->SetMaxFPS(bTracked || Visible > 0.f ? 60.f : 30.f);
 	if (bTracked)
 	{
@@ -370,10 +498,13 @@ void AReflectARMirror::Tick(float Dt)
 	// ---- person mask: trims the occluders, and measures the user's build a few times a second
 	const bool bMaskFresh = bTracked && Tracking->Mask() && NowT - Tracking->MaskCaptureTime < 0.3;
 	const bool bMaskOn = bTrimToMask && bMaskFresh;
+	// the depth camera's own measurement of the build wins over the mask's silhouette
+	const bool bShapeMeasured = bTracked && F->Range == TEXT("ok") && Shape.Apply(F->ShapeA, F->ShapeD, Rig, Dt);
+	if (bShapeMeasured) Shape.ApplyMould(F->ShapeGZ, F->ShapeSh, Rig, Dt);
 	if (bMaskFresh)
 	{
 		Tracking->PoseAt(Tracking->MaskCaptureTime, MaskJoints);
-		if (F->Range == TEXT("ok") && GFrameCounter % 4 == 0 && F->Cam.Valid())
+		if (!bShapeMeasured && F->Range == TEXT("ok") && GFrameCounter % 4 == 0 && F->Cam.Valid())
 		{
 			FVector4f Rows[3];
 			MaskRows(F->Cam, Rows);
@@ -391,8 +522,8 @@ void AReflectARMirror::Tick(float Dt)
 	}
 	UpdateCamera();
 	SetParams(bMaskOn);
-	LatencyLine = FString::Printf(TEXT("latency %.0f ms  ·  prediction %s  lead %+.0f ms  [P] [ [ ] ]  ·  occlusion %s [O]"),
-		Tracking->LatencyMs, bPredict ? *FString::Printf(TEXT("+%.0f ms"), Tracking->HorizonMs) : TEXT("off"), LeadMs,
+	LatencyLine = FString::Printf(TEXT("%slatency %.0f ms  ·  prediction %s  lead %+.0f ms  [P] [ [ ] ]  ·  occlusion %s [O]"),
+		bLatencyTest ? TEXT("LATENCY TEST [L]  ·  ") : TEXT(""), Tracking->LatencyMs, bPredict ? *FString::Printf(TEXT("+%.0f ms"), Tracking->HorizonMs) : TEXT("off"), LeadMs,
 		bMaskOn ? TEXT("person mask") : TEXT("capsules"));
 }
 

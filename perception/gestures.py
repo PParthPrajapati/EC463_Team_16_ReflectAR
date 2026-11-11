@@ -7,7 +7,9 @@ smoothing filters. The raw camera image is not mirrored, so the user's right is 
 
 A swipe is one fast, mostly sideways stroke: it starts when the hand's sideways speed passes
 swipe_start_speed_sw, and fires mid-stroke once it has covered swipe_min_dx_sw with a peak
-speed of swipe_peak_speed_sw. The way back is not a swipe: after one, a stroke the other way
+speed of swipe_peak_speed_sw. While a stroke is under way, swipe_progress (-1..1, + = toward the
+next garment) says how far along it is, so the carousel can move with the hand before the swipe
+counts. The way back is not a swipe: after one, a stroke the other way
 only counts once the hand has settled, and (within swipe_return_window_s) only if it is nearly
 as fast as the swipe was. swipe_direction "natural" works like scrolling (the carousel follows
 the hand: moving it to the right brings in the item on the left); "pointer" is the opposite.
@@ -40,6 +42,7 @@ class Gestures:
         self.last_swipe_t, self.last_swipe_dir, self.last_swipe_peak = -1e9, 0, 0.0
         self.settled = True                           # hands held still (or lowered) since the last swipe
         self.debug = ""
+        self.swipe_progress, self.swipe_hand = 0.0, ""    # live feedback for the carousel
         self._reset_fist()
         self.need_release = False
 
@@ -47,6 +50,7 @@ class Gestures:
         for s in SIDES:
             self.hist[s].clear()
             self.stroke[s] = None
+        self.swipe_progress, self.swipe_hand = 0.0, ""
         self._reset_fist()
 
     def _reset_fist(self):
@@ -78,6 +82,7 @@ class Gestures:
         sw = max(float(np.linalg.norm(uv[L_SHOULDER] - uv[R_SHOULDER])), 20.0)
         hip_y = -(((uv[L_HIP] + uv[R_HIP]) / 2)[1] - sh_c[1]) / sw if min(vis[L_HIP], vis[R_HIP]) > 0.3 else -2.6
         fired, still = None, True
+        live, live_side = 0.0, ""                                 # the stroke under way, for the UI
         for side in SIDES:
             h, st = self.hist[side], self.stroke[side]
             p = self._hand(side, uv, vis, sh_c, sw)
@@ -124,6 +129,11 @@ class Gestures:
             if st.fired or st.suppressed or fired:
                 continue
             dur = t - st.t0
+            # how far along this stroke is, whether or not it ends up fast enough to count
+            if dur <= c["swipe_max_dur_s"] and dx >= c["swipe_min_dx_over_dy"] * (st.yhi - st.ylo):
+                p = float(np.clip(dx / c["swipe_min_dx_sw"], 0.0, 1.0))
+                if p > abs(live):
+                    live, live_side = st.d * p, side
             ok = (dx >= c["swipe_min_dx_sw"] and st.peak >= c["swipe_peak_speed_sw"]
                   and dx >= c["swipe_min_dx_over_dy"] * (st.yhi - st.ylo) and dur <= c["swipe_max_dur_s"])
             if not ok:
@@ -143,12 +153,13 @@ class Gestures:
             self.debug = f"{side} dx={st.d * dx:+.2f}sw dur={dur:.2f}s peak={st.peak:.1f}sw/s -> FIRE"
         if still and fired is None and not any(self.stroke.values()):
             self.settled = True
+        # + = toward the next garment. Natural: the carousel follows the hand, so a hand moving to
+        # the user's right pulls the previous garment in.
+        sign = -1.0 if self.c.get("swipe_direction", "natural") == "natural" else 1.0
+        self.swipe_progress, self.swipe_hand = (0.0, "") if fired is not None else (sign * live, live_side)
         if fired is None:
             return None
-        to_right = fired > 0                                      # hand moved toward the user's right
-        if self.c.get("swipe_direction", "natural") == "natural":
-            return "prev" if to_right else "next"                 # carousel follows the hand
-        return "next" if to_right else "prev"
+        return "next" if sign * fired > 0 else "prev"
 
     def _end(self, side, st, why):
         if st.fired and st.d == self.last_swipe_dir:              # the swipe's full peak, for the return check
@@ -168,6 +179,8 @@ class Gestures:
                 events.append(e)
                 self._reset_fist()
                 return events
+        else:
+            self.swipe_progress, self.swipe_hand = 0.0, ""
 
         raised = {side: vis[wi] > 0.5 and joints[wi, 1] > joints[si, 1] - 0.05 for side, (wi, si) in SIDES.items()}
         if self.need_release:

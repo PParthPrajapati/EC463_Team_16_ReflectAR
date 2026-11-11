@@ -9,7 +9,8 @@ namespace ReflectAR
 		FRestSkeleton r;
 		r.L = B.TorsoLen; r.sw = B.ShoulderW; r.hipW = B.HipW; r.u = B.Unit();
 		r.upperL = B.UpperL; r.upperR = B.UpperR; r.foreL = B.ForeL; r.foreR = B.ForeR;
-		for (int i = 0; i < 6; i++) r.Profile[i] = B.Profile[i];
+		for (int i = 0; i < 6; i++) { r.Profile[i] = B.Profile[i]; r.DepthProfile[i] = B.DepthProfile[i]; }
+		r.Mould = B.Mould;
 		r.hipC = V3::ZeroVector;
 		r.shC = V3(0, r.L, 0);
 		r.lSh = r.shC - VRight * (r.sw / 2);
@@ -46,11 +47,29 @@ namespace ReflectAR
 
 	void FRestSkeleton::TorsoRadii(float y, float& a, float& d) const
 	{
+		float c, dF;
+		TorsoSection(y, 0.f, a, c, dF, d);                  // with a mould: half the body's thickness
+	}
+
+	void FRestSkeleton::TorsoSection(float y, float s, float& a, float& c, float& dF, float& dB) const
+	{
 		const float t = y / L;
+		float d;
 		BodyModel(t, hipW, sw, u, a, d);
-		const float r = FBodyShape::ProfileAt(Profile, t);
-		a *= r;
-		d *= 1.f + (r - 1.f) * 0.6f;
+		const float Pa = FBodyShape::ProfileAt(Profile, t);
+		a *= Pa;
+		if (!Mould.bValid)
+		{
+			c = 0.f;
+			dF = dB = d * FBodyShape::ProfileAt(DepthProfile, t);
+			return;
+		}
+		const float Back = d * (1.f + (Pa - 1.f) * 0.6f);      // unseen: a wider body is usually deeper behind too
+		const float F0 = FMath::Clamp(Mould.FrontAt(t, 0.f), 0.5f * d, 2.8f * d);
+		c = (F0 - Back) * 0.5f; dB = (F0 + Back) * 0.5f;
+		// measured out to 0.8 of the half-width; the oval through that closes the side
+		const float sc = FMath::Min(FMath::Abs(s), (FBodyMould::Cols - 1) * FBodyMould::ColStep);
+		dF = FMath::Clamp((Mould.FrontAt(t, sc) - c) / FMath::Sqrt(1.f - sc * sc), 0.6f * dB, 1.8f * dB);
 	}
 
 	namespace GarmentMesher
@@ -139,7 +158,9 @@ namespace ReflectAR
 			c.Radii(p.Y, a, d);
 			float Torso = (FMath::Sqrt(p.X * p.X / (a * a) + p.Z * p.Z / (d * d)) - 1.f) * FMath::Min(a, d);
 			Torso = SMax(Torso, p.Y - (s.L - 0.02f * u), 0.05f * u);
-			const float Shoulders = Capsule(p, s.lSh + VUp * 0.005f, s.rSh + VUp * 0.005f, 0.058f * u + e, 0.058f * u + e);
+			// the garment rests on the shoulders: the ease is around the body, not on top of it
+			const float ShR = 0.054f * u + FMath::Min(e, 0.006f * u);
+			const float Shoulders = Capsule(p, s.lSh + VUp * 0.005f, s.rSh + VUp * 0.005f, ShR, ShR);
 			float Body = SMin(Torso, Shoulders, 0.07f * u);
 			// neck band rising slightly above the shoulders (collar base)
 			const bool bCollar = g.Neck == ENeckline::Collar;
@@ -147,7 +168,7 @@ namespace ReflectAR
 			const float Flare = bCollar ? Clamp01((p.Y - s.L) / (0.06f * u)) * 0.028f * u : 0.f;   // collar rolls outward
 			const float NeckBand = FMath::Max(V2(p.X, p.Z + 0.012f * u).Size() - (c.neckR + 0.012f * u + Flare),
 				FMath::Abs(p.Y - (s.L + BandTop * 0.5f)) - (BandTop * 0.5f + 0.012f * u));
-			Body = SMin(Body, NeckBand, 0.03f * u);
+			if (bCollar || g.Neck == ENeckline::HoodDown) Body = SMin(Body, NeckBand, 0.03f * u);
 
 			if (g.bTank)
 			{
@@ -166,17 +187,19 @@ namespace ReflectAR
 				for (int Side = -1; Side <= 1; Side += 2)
 				{
 					const V3 sh = Side < 0 ? s.lSh : s.rSh, End = Side < 0 ? c.lEnd : c.rEnd, Dir = Side < 0 ? c.lDir : c.rDir;
-					const V3 Start = sh - VRight * float(Side) * 0.03f * u + VUp * 0.01f * u;
-					const float r0 = 0.062f * u + se, r1 = Lerp(r0, 0.043f * u + se, g.Sleeve) + g.CuffFlare * u;
+					// the sleeve lies on top of the arm; its ease hangs underneath
+					const V3 Hang = Normalized(VUp - Dir * Dot(VUp, Dir)) * (-0.8f * se);
+					const V3 Start = sh - VRight * float(Side) * 0.03f * u + VUp * 0.01f * u + Hang;
+					const float r0 = 0.056f * u + se, r1 = Lerp(r0, 0.034f * u + 0.6f * se, g.Sleeve) + g.CuffFlare * u;
 					float Arm;
 					if (g.bCuffBand && (Side < 0 ? c.lLong : c.rLong))
 					{
 						// gathered cuff at the wrist; the sleeve above blouses over it
 						const V3 BandStart = End - Dir * (0.055f * u);
 						const float rb = 0.041f * u + 0.25f * se;
-						Arm = SMin(Capsule(p, Start, BandStart, r0, r1), Capsule(p, BandStart, End, rb, rb), 0.008f * u);
+						Arm = SMin(Capsule(p, Start, BandStart + Hang * 0.5f, r0, r1), Capsule(p, BandStart, End, rb, rb), 0.012f * u);
 					}
-					else Arm = Capsule(p, Start, End, r0, r1);
+					else Arm = Capsule(p, Start, End + Hang, r0, r1);
 					Arm = FMath::Max(Arm, Dot(p - End, Dir));                     // flat cuff
 					Body = SMin(Body, Arm, 0.06f * u);
 				}
@@ -295,6 +318,7 @@ namespace ReflectAR
 			const int N = D.Rest.Num();
 			D.Weights.SetNum(N);
 			D.Looseness.SetNum(N);
+			D.Band.SetNum(N);
 			const V3 Mid(0, s.L * 0.45f, 0);
 			float Dist[6], W[6];
 			for (int i = 0; i < N; i++)
@@ -330,8 +354,10 @@ namespace ReflectAR
 				const float TArm = SleeveLen > 0.01f ? Clamp01(Along / SleeveLen) : 0.f;
 				float Loose = Lerp(TTorso, TArm, ArmW);
 				// elastic bands hold on to the body
-				if (g.HemBand > 0.f && p.Y < c.hemY + 0.06f * s.u) Loose *= Lerp(1.f, 0.45f, Clamp01(g.HemBand) * (1.f - ArmW));
-				if (g.bCuffBand && ArmW > 0.5f && Along > SleeveLen - 0.06f * s.u) Loose *= 0.45f;
+				float Band = 0.f;
+				if (g.HemBand > 0.f) Band = Clamp01(g.HemBand) * (1.f - ArmW) * (1.f - SmoothStep(0.f, 1.f, (p.Y - c.hemY) / (0.07f * s.u)));
+				if (g.bCuffBand && ArmW > 0.5f) Band = FMath::Max(Band, 1.f - SmoothStep(0.f, 1.f, (SleeveLen - Along) / (0.07f * s.u)));
+				D.Band[i] = Band;
 				if (p.Y > s.L - 0.02f * s.u && FMath::Abs(p.X) < s.sw * 0.5f) Loose = 0.f;   // collar / yoke
 				D.Looseness[i] = Loose;
 			}
@@ -421,7 +447,7 @@ namespace ReflectAR
 					// not the armpit's body side, which faces along the arm and would smear in a sleeve chart
 					const float Sd = Cen.X < 0 ? -1.f : 1.f;
 					const V3 Dir = FRestSkeleton::ArmDir(Sd), Rel = Cen - (Sd < 0 ? s.lSh : s.rSh);
-					bOnArm = (Rel - Dir * Dot(Rel, Dir)).Size() < 1.5f * (0.062f + g.SleeveEase) * s.u;
+					bOnArm = (Rel - Dir * Dot(Rel, Dir)).Size() < 1.5f * (0.056f + g.SleeveEase) * s.u;
 				}
 				const int Ch = bOnArm ? (Cen.X < 0 ? ChSleeveL : ChSleeveR)
 					: N.Y > 0.55f && Cen.Y > 0.8f * s.L ? ChYoke
@@ -451,12 +477,119 @@ namespace ReflectAR
 			}
 		}
 
+		// ------------------------------------------------------------ ribbed bands
+		/**
+		 * Each band is where a field (m inside the band) is positive: the collar within RibCollar of
+		 * the neck opening, the hem and the cuffs within their width of the edge. The cloth's
+		 * triangles are clipped to that region, so the band's edge is a clean line across them.
+		 */
+		static void BuildRibs(FGarmentMeshData& D, const FRestSkeleton& s, const FGarmentSpec& g, const FCtx& c)
+		{
+			D.RibVerts.Reset(); D.RibUV.Reset(); D.RibTris.Reset();
+			const float u = s.u, wCollar = g.RibCollar * u, wHem = g.RibHem * u, wCuff = g.bTank || g.Sleeve <= 0.f ? 0.f : g.RibCuff * u;
+			if (wCollar <= 0.f && wHem <= 0.f && wCuff <= 0.f) return;
+			const TArray<V3>& R = D.Rest;
+			const int N = R.Num();
+
+			// the neck opening: boundary vertices near the top, between the shoulders
+			TArray<V3> Neck;
+			if (wCollar > 0.f)
+			{
+				TMap<int64, int32> EdgeCount;
+				for (int t = 0; t < D.Tris.Num(); t += 3)
+					for (int e = 0; e < 3; e++) EdgeCount.FindOrAdd(EdgeKey(D.Tris[t + e], D.Tris[t + (e + 1) % 3]))++;
+				TSet<int32> Seen;
+				for (const auto& kv : EdgeCount)
+				{
+					if (kv.Value != 1) continue;
+					for (const int v : { int(kv.Key >> 32), int(kv.Key & 0xffffffff) })
+						if (R[v].Y > s.L - 0.25f * u && FMath::Abs(R[v].X) < s.sw * 0.45f && !Seen.Contains(v)) { Seen.Add(v); Neck.Add(R[v]); }
+				}
+			}
+
+			// per vertex: how far inside a band (m), and (u, v) around / along that band's axis
+			TArray<float> F; TArray<V2> Uv;
+			F.SetNumUninitialized(N); Uv.SetNumUninitialized(N);
+			float ha, hd;
+			c.Radii(c.hemY + 0.5f * wHem, ha, hd);
+			for (int i = 0; i < N; i++)
+			{
+				const V3 p = R[i];
+				const float Arm = ArmWeight(D.Weights[i]);
+				float Best = -1.f; V2 Q = V2::ZeroVector;
+				if (wHem > 0.f && Arm < 0.5f)
+				{
+					Best = c.hemY + wHem - p.Y;
+					Q = V2(FMath::Atan2(p.X, p.Z) * 0.5f * (ha + hd), p.Y);
+				}
+				if (wCuff > 0.f && Arm > 0.5f)
+				{
+					const float Side = p.X < 0 ? -1.f : 1.f;
+					const V3 End = Side < 0 ? c.lEnd : c.rEnd, Dir = Side < 0 ? c.lDir : c.rDir;
+					const float Al = Dot(p - End, Dir), f = wCuff + Al;
+					if (f > Best)
+					{
+						const V3 Rv = (p - End) - Dir * Al, Top = Normalized(VUp - Dir * Dot(VUp, Dir));
+						Best = f;
+						Q = V2(FMath::Atan2(Dot(Rv, VFwd), Dot(Rv, Top)) * 0.045f * u, Al);
+					}
+				}
+				if (wCollar > 0.f && Neck.Num() > 0 && p.Y > s.L - 0.3f * u)
+				{
+					float d2 = 1e9f;
+					for (const V3& n : Neck) d2 = FMath::Min(d2, V3::DistSquared(p, n));
+					const float f = wCollar - FMath::Sqrt(d2);
+					if (f > Best)
+					{
+						Best = f;
+						Q = V2(FMath::Atan2(p.X, p.Z + 0.012f * u) * (c.neckR + 0.02f * u), FMath::Sqrt(d2));
+					}
+				}
+				F[i] = Best; Uv[i] = Q;
+			}
+
+			// clip each triangle to F > 0; u wraps around the axis, so a triangle across the seam
+			// (behind the neck / torso, under the arm) moves its negative side one turn on
+			TMap<uint64, int32> Map;
+			auto Vert = [&](int a, int b, int Wrap, float Period) -> int32
+			{
+				if (a > b) Swap(a, b);
+				const uint64 Key = (uint64(a) << 33) | (uint64(b) << 2) | uint64(Wrap);
+				if (const int32* Found = Map.Find(Key)) return *Found;
+				const float t = a == b ? 0.f : F[a] / (F[a] - F[b]);
+				auto U = [&](int v) { return V2(Uv[v].X + (Wrap && Uv[v].X < 0.f ? Period : 0.f), Uv[v].Y); };
+				D.RibVerts.Add({ a, b, t });
+				D.RibUV.Add(U(a) + (U(b) - U(a)) * t);
+				return Map.Add(Key, D.RibVerts.Num() - 1);
+			};
+			for (int t = 0; t < D.Tris.Num(); t += 3)
+			{
+				const int v[3] = { D.Tris[t], D.Tris[t + 1], D.Tris[t + 2] };
+				if (F[v[0]] <= 0.f && F[v[1]] <= 0.f && F[v[2]] <= 0.f) continue;
+				const float U0 = FMath::Min3(Uv[v[0]].X, Uv[v[1]].X, Uv[v[2]].X), U1 = FMath::Max3(Uv[v[0]].X, Uv[v[1]].X, Uv[v[2]].X);
+				// the seam: a jump in u far larger than a triangle
+				float Period = 0.f;
+				int Wrap = 0;
+				if (U1 - U0 > 6.f * c.Cell) { Wrap = 1; Period = 2.f * FMath::Max(FMath::Abs(U0), FMath::Abs(U1)); }
+				int32 Poly[4]; int n = 0;
+				for (int e = 0; e < 3; e++)
+				{
+					const int a = v[e], b = v[(e + 1) % 3];
+					if (F[a] > 0.f) Poly[n++] = Vert(a, a, Wrap, Period);
+					if ((F[a] > 0.f) != (F[b] > 0.f)) Poly[n++] = Vert(a, b, Wrap, Period);
+				}
+				if (n >= 3) D.RibTris.Append({ Poly[0], Poly[1], Poly[2] });
+				if (n == 4) D.RibTris.Append({ Poly[0], Poly[2], Poly[3] });
+			}
+		}
+
 		// ------------------------------------------------------------ build
 		TSharedPtr<FGarmentMeshData> Build(const FRestSkeleton& s, const FGarmentSpec& g, float CellSize)
 		{
 			FCtx c;
 			c.s = s; c.g = &g; c.Cell = CellSize;
-			c.e = g.Ease * s.u; c.hemY = g.Hem * s.L; c.neckR = 0.068f * s.u;
+			c.e = g.Ease * s.u; c.hemY = g.Hem * s.L;
+			c.neckR = (g.Neck == ENeckline::Crew ? 0.076f : g.Neck == ENeckline::VNeck ? 0.076f : g.Neck == ENeckline::Scoop ? 0.085f : 0.068f) * s.u;
 			c.lEnd = SleeveEnd(s, -1, g.Sleeve, c.lDir, c.lLong);
 			c.rEnd = SleeveEnd(s, +1, g.Sleeve, c.rDir, c.rLong);
 			BuildTables(c);
@@ -564,7 +697,9 @@ namespace ReflectAR
 			// ---- cut openings: remove the neck floor, hem cap and cuff caps
 			TArray<int32> Keep;
 			Keep.Reserve(Tris.Num());
-			const float VDepth = 0.15f * s.u, ScoopDepth = 0.12f * s.u, ScoopW = s.sw * 0.2f;
+			// crew and scoop: the opening dips in front, a parabola ScoopDepth deep and 2 ScoopW wide
+			const bool bScoop = g.Neck == ENeckline::Scoop, bCrew = g.Neck == ENeckline::Crew;
+			const float VDepth = 0.15f * s.u, ScoopDepth = (bScoop ? 0.12f : 0.042f) * s.u, ScoopW = bScoop ? s.sw * 0.2f : c.neckR;
 			for (int t = 0; t < Tris.Num(); t += 3)
 			{
 				const V3 p0 = Verts[Tris[t]], p1 = Verts[Tris[t + 1]], p2 = Verts[Tris[t + 2]];
@@ -575,7 +710,7 @@ namespace ReflectAR
 				if (RXZ < c.neckR * 0.98f && Cen.Y > s.L - 0.08f * s.u && N.Y > 0.25f) bCut = true;             // neck floor
 				if (g.Neck == ENeckline::VNeck && Cen.Z > 0 && N.Z > 0.2f && Cen.Y > s.L - VDepth
 					&& FMath::Abs(Cen.X) < (Cen.Y - (s.L - VDepth)) * 0.42f + 0.005f) bCut = true;              // V
-				if (g.Neck == ENeckline::Scoop && Cen.Z > 0 && N.Z > 0.2f && FMath::Abs(Cen.X) < ScoopW
+				if ((bScoop || bCrew) && Cen.Z > 0 && N.Z > 0.2f && FMath::Abs(Cen.X) < ScoopW
 					&& Cen.Y > s.L - ScoopDepth * (1.f - FMath::Square(Cen.X / ScoopW))) bCut = true;          // scoop
 				if (g.bTank && N.Y > 0.6f && Cen.Y > s.L - 0.075f * s.u - Cell * 0.6f && Cen.Y < s.L - 0.04f * s.u) bCut = true; // armholes
 				if (g.Sleeve > 0.f && !g.bTank)
@@ -592,6 +727,7 @@ namespace ReflectAR
 			Normals(D->Rest, D->Tris, D->RestN);
 			Skin(*D, s, g, c);
 			Unwrap(*D, s, g, c);
+			BuildRibs(*D, s, g, c);
 			return D;
 		}
 	}

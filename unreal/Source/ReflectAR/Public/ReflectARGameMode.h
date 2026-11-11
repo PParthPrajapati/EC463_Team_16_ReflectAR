@@ -17,8 +17,8 @@ public:
 };
 
 /**
- * Canvas UI: range prompt (top), garment carousel (bottom strip, off the body), fist-hold
- * progress ring at the hand, selection toast and a debug line. Laid out for 1920 x 1080.
+ * Hosts the UI: SReflectARHud, a Slate widget painted over the game viewport (prompts, carousel,
+ * gesture feedback; see SReflectARHud.h). Only the latency-test marker is still drawn on the Canvas.
  */
 UCLASS()
 class REFLECTAR_API AReflectARHUD : public AHUD
@@ -27,10 +27,10 @@ class REFLECTAR_API AReflectARHUD : public AHUD
 
 public:
 	virtual void DrawHUD() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 private:
-	float CarouselX = 0.f;
-	TArray<float> CardScale;
+	TSharedPtr<class SReflectARHud> Widget;
+	TWeakObjectPtr<class UGameViewportClient> Viewport;
 	void Panel(float X, float Y, float W, float H, const FLinearColor& C);
-	void Text(const FString& S, float X, float Y, float Scale, const FLinearColor& C, bool bCentre = true);
 };

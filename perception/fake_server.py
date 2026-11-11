@@ -9,6 +9,8 @@ import numpy as np
 import cv2
 from server import Streamer
 from geometry import Intrinsics, CameraToMirror
+from gestures import Gestures
+import synthbody
 
 # rest skeleton in a body frame: x = user's right, y up (hips at 0), z toward the screen
 REST = {
@@ -20,10 +22,14 @@ REST = {
     27: (-0.11, -0.88, 0), 28: (0.11, -0.88, 0),
 }
 
+ARM_OUT = 0.0     # how much further out the arms hang, around a wide body (m)
+
 def skeleton(t, script):
     J = np.zeros((33, 3))
     for k, v in REST.items():
         J[k] = v
+    for k in range(13, 23):
+        J[k, 0] += math.copysign(ARM_OUT, J[k, 0])
     for k in (1, 3, 4, 6, 9, 10):
         J[k] = J[0]
     J[29:31] = J[27:29]; J[31:33] = J[27:29]
@@ -52,8 +58,12 @@ def skeleton(t, script):
             for k, (x, y, z) in pts.items():
                 J[k] = (sgn * x, y, -z)
     if script == "swipe":
-        ph = (t % 3) / 3
-        x = -0.35 + 0.9 * min(ph * 4, 1) if ph < 0.5 else 0.55
+        # every 4 s: a 0.45 s stroke across the chest, alternately one way and the other, then
+        # held still (so the next one isn't taken for the hand coming back)
+        ph, back = t % 4, int(t // 4) % 2 == 1
+        k = min(max((ph - 1.0) / 0.45, 0.0), 1.0)
+        k = k * k * (3 - 2 * k)
+        x = 0.5 - 0.8 * (1 - k if back else k)
         J[16] = (x, 0.35, 0.25); J[14] = (0.22, 0.25, 0.1)
         for i in (18, 20, 22): J[i] = J[16] + (0.03, 0.03, 0)
     # body yaw + sway, place 1.8 m in front of the screen centre, hips at 0.95 m height
@@ -90,6 +100,10 @@ def main():
     ap.add_argument("--script", choices=["none", "swipe", "fist", "belly", "shoulders"], default="none")
     ap.add_argument("--dist", type=float, default=1.8)
     ap.add_argument("--port", type=int, default=0, help="override config.json's port")
+    ap.add_argument("--build", choices=("none",) + synthbody.BUILDS, default="none",
+                    help="send a measured body shape, as the depth camera would (see bodyshape.py, synthbody.py)")
+    ap.add_argument("--shoulders", choices=tuple(synthbody.SHOULDERS), default="normal", help="with --build: how the shoulders slope")
+    ap.add_argument("--no-mould", action="store_true", help="with --build: send only the six widths and depths, not the mould")
     ap.add_argument("--mask", action="store_true", help="also send a person mask drawn from the skeleton")
     args = ap.parse_args()
     cfg = json.load(open("calib/config.json"))
@@ -100,6 +114,14 @@ def main():
     cv2.putText(img, "SYNTHETIC FEED", (300, 280), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (200, 200, 200), 3)
     cam = CameraToMirror(cfg["camera_pose"])
     t0, seq, prog = time.time(), 0, 0.0
+    shape = None
+    if args.build != "none":
+        shape = synthbody.Body(args.build, args.shoulders).message()
+        global ARM_OUT
+        ARM_OUT = max(0.0, max(shape["a"]) + 0.045 - 0.24)
+        if args.no_mould:
+            shape = {k: shape[k] for k in ("a", "d")}
+    gest = Gestures(cfg["gestures"])
     while True:
         now = time.time()
         t = now - t0
@@ -115,18 +137,25 @@ def main():
                     events.append("select"); main.fired = True
             else:
                 prog = 0.0; main.fired = False
-        if args.script == "swipe" and abs((t % 3) - 0.4) < 1 / 60:
-            events.append("next")
+        swipe_p, swipe_h = 0.0, ""
+        if args.script == "swipe":                  # the real detector, on the projected skeleton
+            c = J - np.array(cfg["camera_pose"]["pos_m"])
+            uv = np.stack([K.fx * -c[:, 0] / c[:, 2] + K.cx, K.fy * -c[:, 1] / c[:, 2] + K.cy], axis=1)
+            events += gest.update(now, J, np.full(33, 0.99), {}, uv)
+            swipe_p, swipe_h = gest.swipe_progress, gest.swipe_hand
         d = float(J[23:25, 2].mean())
         rng = "too_close" if d < 1.0 else "too_far" if d > 3.0 else "ok"
         msg = {"t": now, "seq": seq, "tracked": True, "range": rng, "dist": d, "events": events,
                "fist_progress": prog if prog < 1 else 0.0, "fist_hand": "right" if prog > 0 else "",
+               "swipe_progress": round(swipe_p, 3), "swipe_hand": swipe_h,
                "joints": J.ravel().round(4).tolist(), "vel": V.ravel().round(3).tolist(), "vis": [0.99] * 33,
                "eye": eye.round(4).tolist(), "eye_vel": ((V[2] + V[5]) / 2).round(3).tolist(),
                "cam": {**K.as_dict(), "pos": cfg["camera_pose"]["pos_m"], "tilt": 0.0}, "screen": cfg["screen"],
                "predict": cfg.get("predict", {}),
                "proc_fps": 30.0, "depth_hz": 0.0, "scale": 1.0, "z_skel": d, "z_da": 0.0}
         # Streamer resizes + sends the image raw
+        if shape:
+            msg["shape"] = shape
         net.push(msg, (now, img) if seq % 30 == 0 else None, (now, person_mask(J, K, cam)) if args.mask else None)
         seq += 1
         time.sleep(1 / 30)

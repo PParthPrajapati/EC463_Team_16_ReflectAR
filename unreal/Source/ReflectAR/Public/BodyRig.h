@@ -5,6 +5,33 @@
 namespace ReflectAR
 {
 	/**
+	 * A mould of the front of the user's torso, from the depth camera (perception/bodyshape.py):
+	 * how far the surface stands forward of the plane through the hip and shoulder joints, on a
+	 * grid of heights and positions across. A belly, a chest or a flat stomach are in it as they
+	 * are; the six width / depth ratios alone only say how big an oval each height is. Also how
+	 * high the shoulders rise above their joints between the neck and each shoulder: their slope.
+	 */
+	struct FBodyMould
+	{
+		static constexpr int Rows = 16, Cols = 5, ShN = 4;
+		static constexpr float T0 = -0.05f, T1 = 1.f;       // the rows' heights / torso length (bodyshape.GRID_T)
+		static constexpr float ColStep = 0.2f;              // columns at 0, 0.2 .. 0.8 of the half-width (GRID_S), sides averaged
+		static constexpr float ShX[ShN] = { 0.45f, 0.65f, 0.85f, 1.f };   // of the half shoulder width (SH_X)
+		bool bValid = false, bShoulders = false;
+		float Front[Rows][Cols] = {};                       // m
+		float Sh[ShN] = {};                                 // m above the shoulder joints
+
+		/** Forward offset (m) at height t (of the torso length) and s = |x| / half-width. */
+		float FrontAt(float t, float s) const;
+		/** A smooth curve through one value per column (the same on both sides of the body), at
+		 * column fc = |s| / ColStep. Straight lines between the columns would show as ridges down
+		 * the front of a garment. */
+		static float AcrossAt(const float* V, float fc);
+		/** Height (m) of the shoulder's top above the joints at x = |x| / half shoulder width. */
+		float ShoulderAt(float x) const;
+	};
+
+	/**
 	 * Smoothed skeleton plus derived body frames and measurements, in body coordinates of the
 	 * real (unreflected) body. Garments are built from this; reflection is a parent transform.
 	 */
@@ -24,6 +51,10 @@ namespace ReflectAR
 
 		/** Measured torso half-width relative to the generic model at FBodyShape::Levels (1 = average). */
 		float Profile[6] = { 1, 1, 1, 1, 1, 1 };
+		/** The same for its half-depth (front to back): measured by the depth camera, else guessed from the width. */
+		float DepthProfile[6] = { 1, 1, 1, 1, 1, 1 };
+		/** The front of the torso and the shoulders' slope, when a depth camera measures them. */
+		FBodyMould Mould;
 
 		/** 1/s; 0 = follow the target exactly (the tracking client already filters and predicts). */
 		float Smoothing = 0.f;
@@ -35,7 +66,7 @@ namespace ReflectAR
 
 		FBodyRig();
 		void Update(const V3* Target, const float* InVis, float Dt, bool bSnap);
-		void ResetShape() { for (float& p : Profile) p = 1.f; }
+		void ResetShape() { for (float& p : Profile) p = 1.f; for (float& p : DepthProfile) p = 1.f; Mould = FBodyMould(); }
 
 	private:
 		bool bMeasured = false;
@@ -48,7 +79,8 @@ namespace ReflectAR
 	 * actual build. At a few heights between the hips and the shoulders it walks the mask outward
 	 * from the torso's centre line until it leaves the person; a side is skipped while the arm
 	 * touches that edge, and the whole sample unless the user faces the camera. The ratio to the
-	 * generic model is averaged over ~1.5 s into FBodyRig::Profile.
+	 * generic model is averaged over ~1.5 s into FBodyRig::Profile. With a depth camera, perception
+	 * measures the width and the depth of the torso itself and Apply() takes those instead.
 	 */
 	class FBodyShape
 	{
@@ -59,6 +91,18 @@ namespace ReflectAR
 		int Samples = 0;
 
 		void Reset(FBodyRig& B);
+		/**
+		 * The build as the depth camera measured it (perception/bodyshape.py): half-width A and
+		 * half-depth D in metres per level, 0 where not measured yet. Returns false if there is
+		 * nothing to use, and the mask's silhouette should be measured instead.
+		 */
+		bool Apply(const TArray<float>& A, const TArray<float>& D, FBodyRig& B, float Dt);
+		/**
+		 * The mould of the torso's front (GZ: FBodyMould::Rows x Cols forward offsets in metres, row
+		 * by row) and the shoulder tops (Sh), 0 where not measured yet. Used once most of it is
+		 * there; holes are filled from their neighbours.
+		 */
+		void ApplyMould(const TArray<float>& GZ, const TArray<float>& Sh, FBodyRig& B, float Dt);
 		static float ProfileAt(const float* Profile, float t);
 
 		/**

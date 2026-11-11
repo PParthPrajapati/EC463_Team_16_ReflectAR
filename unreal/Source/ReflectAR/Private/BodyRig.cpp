@@ -67,6 +67,130 @@ namespace ReflectAR
 		return Profile[5];
 	}
 
+	bool FBodyShape::Apply(const TArray<float>& A, const TArray<float>& D, FBodyRig& B, float Dt)
+	{
+		if (A.Num() != 6) return false;
+		const float U = B.Unit(), Rate = 1.f - FMath::Exp(-Dt / 0.5f);     // perception already averages; this only eases steps
+		float Ra[6], Rd[6];
+		int Na = 0;
+		for (int k = 0; k < 6; k++)
+		{
+			float a, d;
+			FRestSkeleton::BodyModel(Levels[k], B.HipW, B.ShoulderW, U, a, d);
+			Ra[k] = A[k] > 0.f ? FMath::Clamp(A[k] / a, 0.7f, 1.8f) : 0.f;
+			Rd[k] = D.Num() == 6 && D[k] > 0.f ? FMath::Clamp(D[k] / d, 0.65f, 2.2f) : 0.f;
+			Na += Ra[k] > 0.f;
+		}
+		if (Na == 0) return false;
+		// levels not measured (an arm in the way, a bag) take the nearest measured one's ratio
+		auto Fill = [](float* R)
+		{
+			for (int k = 0; k < 6; k++)
+			{
+				if (R[k] > 0.f) continue;
+				for (int o = 1; o < 6 && R[k] <= 0.f; o++)
+					for (const int j : { k - o, k + o })
+						if (j >= 0 && j < 6 && R[j] > 0.f && R[k] <= 0.f) R[k] = -R[j];
+			}
+			for (int k = 0; k < 6; k++) R[k] = FMath::Abs(R[k]);
+		};
+		Fill(Ra); Fill(Rd);
+		for (int k = 0; k < 6; k++)
+		{
+			const float Rdk = Rd[k] > 0.f ? Rd[k] : 1.f + (Ra[k] - 1.f) * 0.6f;
+			B.Profile[k] = Samples == 0 ? Ra[k] : Lerp(B.Profile[k], Ra[k], Rate);
+			B.DepthProfile[k] = Samples == 0 ? Rdk : Lerp(B.DepthProfile[k], Rdk, Rate);
+		}
+		Samples++;
+		return true;
+	}
+
+	static float CatmullRom(float p0, float p1, float p2, float p3, float x)
+	{
+		return p1 + 0.5f * x * (p2 - p0 + x * (2.f * p0 - 5.f * p1 + 4.f * p2 - p3 + x * (3.f * (p1 - p2) + p3 - p0)));
+	}
+
+	float FBodyMould::AcrossAt(const float* V, float fc)
+	{
+		fc = FMath::Clamp(fc, 0.f, float(Cols - 1));
+		const int c = FMath::Min(int(fc), Cols - 2);
+		// mirrored about the centre line; continued straight past the last column
+		const float Before = V[c == 0 ? 1 : c - 1], After = c + 2 < Cols ? V[c + 2] : 2.f * V[c + 1] - V[c];
+		return CatmullRom(Before, V[c], V[c + 1], After, fc - c);
+	}
+
+	float FBodyMould::FrontAt(float t, float s) const
+	{
+		const float fr = FMath::Clamp((t - T0) / (T1 - T0), 0.f, 1.f) * (Rows - 1), fc = FMath::Abs(s) / ColStep;
+		const int r = FMath::Min(int(fr), Rows - 2);
+		return CatmullRom(AcrossAt(Front[FMath::Max(r - 1, 0)], fc), AcrossAt(Front[r], fc), AcrossAt(Front[r + 1], fc),
+			AcrossAt(Front[FMath::Min(r + 2, Rows - 1)], fc), fr - r);
+	}
+
+	float FBodyMould::ShoulderAt(float x) const
+	{
+		if (x <= ShX[0]) return Sh[0];
+		for (int i = 1; i < ShN; i++)
+			if (x <= ShX[i]) return Lerp(Sh[i - 1], Sh[i], (x - ShX[i - 1]) / (ShX[i] - ShX[i - 1]));
+		return Sh[ShN - 1];
+	}
+
+	void FBodyShape::ApplyMould(const TArray<float>& GZ, const TArray<float>& Sh, FBodyRig& B, float Dt)
+	{
+		constexpr int R = FBodyMould::Rows, C = FBodyMould::Cols;
+		if (GZ.Num() != R * C) return;
+		float G[R][C];
+		int Have = 0;
+		for (int r = 0; r < R; r++)
+		{
+			for (int c = 0; c < C; c++) G[r][c] = GZ[r * C + c];
+			Have += G[r][0] > 0.f;
+		}
+		if (Have < R * 3 / 4) return;                         // not enough of it yet: the ovals do until then
+		// a hole in a row: as its nearest measured neighbour in that row, along the oval through it
+		auto Oval = [](int c) { const float s = c * FBodyMould::ColStep; return FMath::Sqrt(1.f - s * s); };
+		for (int r = 0; r < R; r++)
+		{
+			if (G[r][0] <= 0.f) continue;
+			for (int c = 1; c < C; c++)
+			{
+				if (G[r][c] > 0.f) continue;
+				int n = c - 1;
+				for (int o = c + 1; o < C && G[r][c - 1] <= 0.f; o++) if (G[r][o] > 0.f) { n = o; break; }
+				G[r][c] = -FMath::Abs(G[r][n]) * Oval(c) / Oval(n);            // (negative: filled, not to be copied from in turn)
+			}
+			for (int c = 1; c < C; c++) G[r][c] = FMath::Abs(G[r][c]);
+		}
+		// a row not measured at all: the nearest one that is
+		for (int r = 0; r < R; r++)
+		{
+			if (G[r][0] > 0.f) continue;
+			for (int o = 1; o < R && G[r][0] <= 0.f; o++)
+				for (const int j : { r - o, r + o })
+					if (j >= 0 && j < R && G[j][0] > 0.f && G[r][0] <= 0.f)
+						for (int c = 0; c < C; c++) G[r][c] = -G[j][c];
+		}
+		for (int r = 0; r < R; r++) for (int c = 0; c < C; c++) G[r][c] = FMath::Abs(G[r][c]);
+
+		FBodyMould& M = B.Mould;
+		const float Rate = 1.f - FMath::Exp(-Dt / 0.5f);       // perception already averages; this only eases steps
+		for (int r = 0; r < R; r++)
+			for (int c = 0; c < C; c++)
+			{
+				// a little smoothing up and down: depth noise shows as rings around the body otherwise
+				const float v = 0.25f * G[FMath::Max(r - 1, 0)][c] + 0.5f * G[r][c] + 0.25f * G[FMath::Min(r + 1, R - 1)][c];
+				M.Front[r][c] = M.bValid ? Lerp(M.Front[r][c], v, Rate) : v;
+			}
+		M.bValid = true;
+		bool bSh = Sh.Num() == FBodyMould::ShN;
+		for (int i = 0; bSh && i < FBodyMould::ShN; i++) bSh = Sh[i] > 0.f;
+		if (bSh)
+		{
+			for (int i = 0; i < FBodyMould::ShN; i++) M.Sh[i] = M.bShoulders ? Lerp(M.Sh[i], Sh[i], Rate) : Sh[i];
+			M.bShoulders = true;
+		}
+	}
+
 	static int SampleMask(const TArray<uint8>& Mask, int MW, int MH, const V2& p)
 	{
 		const int x = FMath::FloorToInt(p.X), y = FMath::FloorToInt(p.Y);
@@ -144,6 +268,7 @@ namespace ReflectAR
 			if (r < 0.7f || r > 1.6f) continue;
 			if (LevelSamples[k] > 15 && FMath::Abs(r - B.Profile[k]) > 0.2f) continue;   // a bag, a loose sleeve, ...
 			B.Profile[k] = LevelSamples[k] == 0 ? r : Lerp(B.Profile[k], r, Rate);
+			B.DepthProfile[k] = 1.f + (B.Profile[k] - 1.f) * 0.6f;      // unseen: wider usually means deeper too
 			LevelSamples[k]++;
 			Samples++;
 		}

@@ -36,7 +36,11 @@ namespace ReflectAR
 		TArray<FString> Events;
 		float FistProgress = 0;
 		FString FistHand;
+		float SwipeProgress = 0;      // -1..1: a swipe under way, toward the next (+) / previous (-) garment
+		FString SwipeHand;
 		TArray<float> Joints, Vel, Vis, Eye, EyeVel;
+		TArray<float> ShapeGZ, ShapeSh;   // the mould of the torso's front and the shoulder tops (FBodyMould), 0 = not yet
+		TArray<float> ShapeA, ShapeD;   // measured torso half-width / half-depth (m) at FBodyShape::Levels, 0 = not yet
 		FCamInfo Cam;
 		FScreenInfo Screen;
 		bool bHasScreen = false, bHasPredict = false;
@@ -88,6 +92,8 @@ namespace ReflectAR
 		/** The pose at local time T without the hand-over easing (e.g. at the mask's capture time). */
 		void PoseAt(double T, V3* Out) const;
 		float DisplayLatency() const { return Tuning.DisplayLatency; }
+		/** local clock - perception clock (s); valid once a frame has arrived. */
+		double PerceptionClockOffset() const { return ClockOffset; }
 
 		// FRunnable
 		virtual uint32 Run() override;

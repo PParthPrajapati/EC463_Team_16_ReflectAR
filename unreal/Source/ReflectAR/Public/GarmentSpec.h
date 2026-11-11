@@ -18,15 +18,19 @@ namespace ReflectAR
 	struct FGarmentSpec
 	{
 		FString Name = TEXT("Garment");
+		FString Detail;                   // one short line for the UI: fabric and cut
+		/** The authored mesh this garment is made from (garments/<Asset>.fbx, see GarmentAsset.h). The
+		 *  cut below is then only the fallback for when that mesh isn't in the project. */
+		FString Asset;
 		FLinearColor ColorA = FLinearColor::White, ColorB = FLinearColor::Gray;   // sRGB-authored colours
 		EPattern Pattern = EPattern::Solid;
 		float Tile = 0.25f;               // metres per pattern repeat
 
 		// ---- cut
 		float Hem = -0.08f;               // hem height, fraction of torso length (0 = hip joints)
-		float Ease = 0.015f;              // looseness around the torso
+		float Ease = 0.035f;              // room around the torso (m of radius): what the fabric drapes with
 		float Sleeve = 0.3f;              // fraction of the arm covered (0 = sleeveless)
-		float SleeveEase = 0.008f;
+		float SleeveEase = 0.024f;
 		ENeckline Neck = ENeckline::Crew;
 		bool bTank = false;               // narrow straps instead of shoulders
 		float Quilt = 0.f;                // puffer baffle bulge height (m)
@@ -34,12 +38,12 @@ namespace ReflectAR
 		int Placket = 0;                  // front closure: 0 none, 1 buttons, 2 zipper
 		float PlacketLen = 1.f;           // fraction of the front it runs down (polo = short)
 
-		// ---- fabric (XPBD)
-		float Stretch = 1e-6f;            // stretch compliance (lower = less stretchy)
-		float Compress = 2e-4f;           // compression compliance (higher = buckles easily)
-		float Bend = 2e-2f;               // bending compliance (higher = softer, drapier)
+		// ---- fabric (XPBD compliances, per s^2)
+		float Stretch = 2e-7f;            // stretch compliance (lower = less stretchy)
+		float Compress = 6e-6f;           // compression compliance (higher = shrinks before it folds)
+		float Bend = 4e-5f;               // bending compliance (higher = softer, drapier)
 		float Damping = 0.04f;
-		float Drape = 1.f;                // how far loose regions may hang from the body
+		float Drape = 1.f;                // how far free cloth may swing from where the body carries it
 		float Sheen = 0.25f;              // cloth shading model: fuzz / sheen amount
 		float Density = 1.f;              // relative weight (gravity sag)
 
@@ -47,6 +51,11 @@ namespace ReflectAR
 		float Fit = 0.7f;                 // below the chest: 0 = follows the waist, 1 = hangs straight
 		float HemBand = 0.f;              // ribbed hem band pulled in to the hips (0..1)
 		bool bCuffBand = false;           // gathered cuffs at the wrist (long sleeves)
+		float Slack = 0.02f;              // extra fabric between where the garment is held: what bunches into folds
+
+		// ---- ribbed knit bands, drawn as a second layer on the cloth (widths in m, 0 = none)
+		float RibCollar = 0.f, RibHem = 0.f, RibCuff = 0.f;
+		FLinearColor RibColor = FLinearColor(-1.f, 0.f, 0.f);   // r < 0: the garment's own colour
 
 		// ---- material and trims
 		float Smooth = 0.22f;             // perceptual smoothness of the fibres (roughness = 1 - this)
@@ -56,7 +65,7 @@ namespace ReflectAR
 		bool bMetalButtons = false;
 	};
 
-	/** The 10 upper-body garments in the catalogue. */
+	/** The upper-body garments in the catalogue. */
 	const TArray<FGarmentSpec>& GarmentCatalog();
 
 	/** Colour and weave height (0..1) at (u, v) in [0, 1) of one repeat of the pattern. */
@@ -71,5 +80,7 @@ namespace ReflectAR
 	{
 		TStrongObjectPtr<UTexture2D> BaseColor, Normal, Mask;
 		static const FFabricMaps& Get(const FGarmentSpec& S);
+		/** The maps of the garment's ribbed bands. */
+		static const FFabricMaps& GetRib(const FGarmentSpec& S);
 	};
 }

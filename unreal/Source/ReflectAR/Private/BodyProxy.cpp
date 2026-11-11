@@ -90,10 +90,25 @@ namespace ReflectAR
 		const float Room = Garment ? Garment->Room() : 0.f;
 
 		// ---- under the garment: fitted, never trimmed
-		Place(Parts[Torso], B.HipC, B.ShC, B.ShoulderW * 0.42f, 0.095f * u, B.Fwd);
-		Place(Parts[Neck], B.ShC, B.HeadC - B.Up * 0.05f * u, 0.05f * u, 0.05f * u, B.Fwd);
+		// The torso stand-in only has to hide the garment's far side, so it must stay inside the
+		// garment everywhere: it shrinks with a slender build (its narrowest level) but barely grows
+		// with a heavy one, whose chest is much shallower than its belly.
+		float Pw = 1.1f, Pd = 1.1f;
+		for (int k = 1; k < 6; k++) { Pw = FMath::Min(Pw, B.Profile[k]); Pd = FMath::Min(Pd, B.DepthProfile[k]); }
+		// kept inside the body the garments are cut on: a yoke lies only a few millimetres off the
+		// shoulders, so the stand-in stops below them and is slimmer than the cloth's own colliders
+		Place(Parts[Torso], B.HipC, B.ShC - B.Up * 0.1f * u, B.ShoulderW * 0.4f * Pw, 0.085f * u * Pd, B.Fwd);
+		Place(Parts[Neck], B.ShC, B.HeadC - B.Up * 0.05f * u, 0.045f * u, 0.045f * u, B.Fwd);
+		// (no wider than the measured hips, or on a slender build the thighs would stand out through
+		// a hem cut to those hips)
+		float HipA, HipD;
+		FRestSkeleton::BodyModel(0.f, B.HipW, B.ShoulderW, u, HipA, HipD);
+		const float LegMax = FMath::Max(HipA * FMath::Min(B.Profile[0], B.Profile[1]) - B.HipW * 0.5f, 0.04f * u);
 		for (int i = 0; i < 4; i++)
-			Place(Parts[Legs + i], J[LegSegs[i].a], J[LegSegs[i].b], LegSegs[i].r * u, LegSegs[i].r * u, B.Fwd);
+		{
+			const float r = FMath::Min(LegSegs[i].r * u, LegMax);
+			Place(Parts[Legs + i], J[LegSegs[i].a], J[LegSegs[i].b], r, r, B.Fwd);
+		}
 
 		for (int s = 0; s < 2; s++)
 		{
@@ -102,15 +117,17 @@ namespace ReflectAR
 			const int Ii = bLeft ? LM::LIndex : LM::RIndex, Pi = bLeft ? LM::LPinky : LM::RPinky, Ti = bLeft ? LM::LThumb : LM::RThumb;
 			const V3 S = J[Si], E = J[Ei], W = J[Wi];
 			const float L1 = V3::Distance(S, E), L2 = V3::Distance(E, W);
-			const float RUpper = 0.045f * u, RFore = 0.04f * u, m = ArmMargin * g;
+			const float RUpper = 0.039f * u, RFore = 0.033f * u, m = ArmMargin * g;
 
 			// arm: covered from the shoulder to the cuff, bare (oversized + trimmed) after it
 			const float Cuff = Clamp01(Sleeve) * (L1 + L2);
 			const float Bare = Cuff + (Cuff > 0.f ? 0.02f * u + RFore + m : 0.06f * u);   // clear of the cuff / armhole
 			auto P = [&](float x) { return x <= L1 ? LerpV(S, E, x / FMath::Max(L1, 1e-4f)) : LerpV(E, W, (x - L1) / FMath::Max(L2, 1e-4f)); };
 
-			if (Cuff > 0.f) Place(Parts[Covered + 2 * s], S, P(FMath::Min(Cuff, L1)), RUpper, RUpper, B.Fwd); else Parts[Covered + 2 * s].Scale = V3::ZeroVector;
-			if (Cuff > L1) Place(Parts[Covered + 2 * s + 1], E, P(Cuff), RFore, RFore, B.Fwd); else Parts[Covered + 2 * s + 1].Scale = V3::ZeroVector;
+			// under a sleeve the stand-in is slimmer still: the sleeve head is sewn close to the arm
+			const float RCu = 0.85f * RUpper, RCf = 0.85f * RFore;
+			if (Cuff > 0.f) Place(Parts[Covered + 2 * s], S, P(FMath::Min(Cuff, L1)), RCu, RCu, B.Fwd); else Parts[Covered + 2 * s].Scale = V3::ZeroVector;
+			if (Cuff > L1) Place(Parts[Covered + 2 * s + 1], E, P(Cuff), RCf, RCf, B.Fwd); else Parts[Covered + 2 * s + 1].Scale = V3::ZeroVector;
 			if (Cuff > 0.f) Cover.Emplace(S, P(FMath::Min(Cuff, L1)), RUpper + Room);      // the sleeve
 			if (Cuff > L1) Cover.Emplace(E, P(Cuff), RFore + Room);
 

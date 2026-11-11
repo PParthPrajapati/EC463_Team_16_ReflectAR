@@ -105,6 +105,8 @@ class RealSenseCamera:
         # and a camera left by a stopped or crashed run is half-claimed: a query can fail with
         # "failed to set power state", or the start succeeds and never sends a frame. Everything
         # touching the device happens after a reset, and any failure costs one attempt.
+        if os.environ.get("RS_NO_RESET"):              # caller already freed the camera (e.g. restarted
+            rc = {**rc, "reset_on_start": False}        # UVCAssistant): a reset would let macOS grab it again
         tries, link = rc.get("start_tries", 4), "usb3"
         for attempt in range(1, tries + 1):
             try:
@@ -157,6 +159,7 @@ class RealSenseCamera:
                      f"USB {self.usb}, colour {ci.width}x{ci.height} @ {cf} fps, depth {dw}x{dh} @ {df} fps")
         self.align = rs.align(rs.stream.color)
         self.frame, self.depth, self.stamp, self.seq = None, None, 0.0, 0
+        self.recv = 0.0                                  # host time the newest frame arrived
         self._depth_next = None
         self.depth_hz = self.color_hz = 0.0              # frames actually arriving
         self.cond = threading.Condition()
@@ -216,6 +219,7 @@ class RealSenseCamera:
             depth = np.asanyarray(d.get_data()).copy()
             with self.cond:
                 self.frame, self._depth_next, self.stamp, self.seq = color, depth, t, self.seq + 1
+                self.recv = t_recv
                 self.cond.notify_all()
 
     def read(self, last_seq):
@@ -226,6 +230,7 @@ class RealSenseCamera:
                 raise RuntimeError("RealSense started but sent no frames: replug it, or pick a smaller "
                                    "mode in config.json (camera.realsense)")
             self.depth = self._depth_next
+            self.read_recv = self.recv                   # arrival time of the frame returned here
             return self.frame, self.stamp, self.seq
 
 
@@ -252,6 +257,18 @@ class SensorDepth:
         x = int(np.clip(u * W / img_w, 0, W - 1)); y = int(np.clip(v * H / img_h, 0, H - 1))
         win = d[max(y - r, 0):y + r + 1, max(x - r, 0):x + r + 1]
         return win[win > 0] * self.cam.depth_scale
+
+    def line(self, us, vs, img_w, img_h):
+        """Depths (m, 0 = none) at arrays of frame pixels, for bodyshape."""
+        d = self.cam.depth
+        if d is None:
+            return np.zeros(len(us))
+        H, W = d.shape
+        x = np.round(np.asarray(us) * W / img_w).astype(int); y = np.round(np.asarray(vs) * H / img_h).astype(int)
+        ok = (x >= 0) & (x < W) & (y >= 0) & (y < H)
+        out = np.zeros(len(x))
+        out[ok] = d[y[ok], x[ok]] * self.cam.depth_scale
+        return out
 
     def sample(self, u, v, img_w, img_h, r=6):
         """Median depth around frame pixel (u, v), like MonoDepth.sample."""

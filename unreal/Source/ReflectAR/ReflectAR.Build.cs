@@ -11,7 +11,7 @@ public class ReflectAR : ModuleRules
 		});
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"Sockets", "Networking", "Json", "ImageWrapper", "RenderCore", "RHI", "SlateCore",
+			"Sockets", "Networking", "Json", "ImageWrapper", "RenderCore", "RHI", "SlateCore", "Slate",
 		});
 	}
 }

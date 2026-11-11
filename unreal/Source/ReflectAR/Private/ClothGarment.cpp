@@ -1,9 +1,10 @@
 #include "ClothGarment.h"
+#include "GarmentFit.h"
 #include "Async/Async.h"
 
 namespace ReflectAR
 {
-	static constexpr int MaxVerts = 4000;
+	static constexpr int MaxVerts = 9000;
 
 	// ---------------------------------------------------------------- bones
 	/** Frame with Y along axisY and Z toward refZ (Unity: TRS(origin, LookRotation(z, y))). */
@@ -37,7 +38,15 @@ namespace ReflectAR
 			|| D(Body.UpperL, Built.upperL) > 0.3f || D(Body.UpperR, Built.upperR) > 0.3f
 			|| D(Body.ForeL, Built.foreL) > 0.3f || D(Body.ForeR, Built.foreR) > 0.3f) return true;
 		for (int i = 0; i < 6; i++)
-			if (FMath::Abs(Body.Profile[i] - Built.Profile[i]) > 0.08f) return true;
+			if (FMath::Abs(Body.Profile[i] - Built.Profile[i]) > 0.08f || FMath::Abs(Body.DepthProfile[i] - Built.DepthProfile[i]) > 0.1f) return true;
+		// the mould of the torso's front and the shoulders' slope: by more than a centimetre or so
+		const FBodyMould& M = Body.Mould; const FBodyMould& W = Built.Mould;
+		if (M.bValid != W.bValid || M.bShoulders != W.bShoulders) return true;
+		for (int r = 0; M.bValid && r < FBodyMould::Rows; r++)
+			for (int c = 0; c < FBodyMould::Cols; c++)
+				if (FMath::Abs(M.Front[r][c] - W.Front[r][c]) > 0.012f) return true;
+		for (int i = 0; M.bShoulders && i < FBodyMould::ShN; i++)
+			if (FMath::Abs(M.Sh[i] - W.Sh[i]) > 0.012f) return true;
 		return false;
 	}
 
@@ -57,27 +66,44 @@ namespace ReflectAR
 		if (!bRebuild) return;
 		const FRestSkeleton Skel = FRestSkeleton::From(Body);
 		const FGarmentSpec* S = &Spec;
-		Pending = Async(EAsyncExecution::ThreadPool, [Skel, S]() { return Generate(Skel, S); });
+		// made from its authored mesh if the project has it, else generated from the cut
+		TSharedPtr<const FGarmentAsset> Asset = Spec.Asset.IsEmpty() ? nullptr : FindGarmentAsset(Spec.Asset);
+		Pending = Async(EAsyncExecution::ThreadPool, [Skel, S, Asset]() { return Generate(Skel, S, Asset); });
 	}
 
-	TSharedPtr<FClothGarment::FBuilt> FClothGarment::Generate(FRestSkeleton Skel, const FGarmentSpec* SpecPtr)
+	TSharedPtr<FClothGarment::FBuilt> FClothGarment::Generate(FRestSkeleton Skel, const FGarmentSpec* SpecPtr, TSharedPtr<const FGarmentAsset> Asset)
 	{
 		const FGarmentSpec& S = *SpecPtr;
 		const double T0 = FPlatformTime::Seconds();
 		// detail relative to the body, capped: solver cost grows with the vertex count
 		const float Cell = GarmentMesher::DefaultCell * FMath::Max(Skel.u, 0.8f);
-		TSharedPtr<FGarmentMeshData> D = GarmentMesher::Build(Skel, S, Cell);
-		if (D->Rest.Num() > MaxVerts)
-			D = GarmentMesher::Build(Skel, S, Cell * FMath::Sqrt(D->Rest.Num() / (MaxVerts * 0.9f)));
+		TSharedPtr<FGarmentMeshData> D;
+		if (Asset.IsValid()) D = FitGarmentAsset(*Asset, Skel);
+		else
+		{
+			D = GarmentMesher::Build(Skel, S, Cell);
+			if (D->Rest.Num() > MaxVerts)
+				D = GarmentMesher::Build(Skel, S, Cell * FMath::Sqrt(D->Rest.Num() / (MaxVerts * 0.9f)));
+		}
+		// an authored mesh is already draped: its folds are in its shape, it needs no extra fabric
+		const float Slack = Asset.IsValid() ? 0.f : S.Slack;
 		TSharedPtr<FBuilt> R = MakeShared<FBuilt>();
-		R->Skel = Skel; R->Data = D;
+		R->Skel = Skel; R->Data = D; R->bAuthored = Asset.IsValid();
 		const int N = D->Rest.Num();
 		R->MaxDist.SetNum(N); R->SkinK.SetNum(N);
+		// Only the yoke, collar and sleeve caps are sewn to the body's motion. Below them the cloth is
+		// free: it hangs from there and rests on the body. The leash is just a safety limit, and
+		// elastic bands (ribbed hem, cuffs) hold on to the body.
+		const float Leash = FMath::Min((0.07f + 2.f * S.Ease) * S.Drape, 0.2f) * Skel.u;
 		for (int i = 0; i < N; i++)
 		{
-			const float l = D->Looseness[i];
-			R->MaxDist[i] = Lerp(0.002f, (0.03f + S.Ease) * S.Drape * Skel.u, FMath::Pow(l, 1.4f));
-			R->SkinK[i] = Lerp(0.6f, 0.015f, FMath::Pow(l, 0.7f));
+			const float l = D->Looseness[i], Band = D->Band[i];
+			// Around the armholes and across the upper chest the cloth is cut close and many seams
+			// meet: there it keeps to its cut within a couple of centimetres, or it slips into the
+			// armpit and under the arm. It hangs free from the chest down and along the sleeves.
+			const float High = Ramp(0.5f, 0.8f, D->Rest[i].Y / Skel.L);
+			R->MaxDist[i] = Lerp(Lerp(0.002f, Leash * Lerp(1.f, 0.15f, High), Ramp(0.02f, 0.18f, l)), 0.012f * Skel.u, Band);
+			R->SkinK[i] = FMath::Max3(Lerp(0.5f, 0.f, Ramp(0.f, 0.1f, l)), 0.2f * Band, 0.15f * High);
 		}
 		const TArray<int32>& Tris = D->Tris;
 		TMap<int64, int32> EdgeSet;                                 // edge -> first opposite vertex
@@ -91,8 +117,16 @@ namespace ReflectAR
 				else { EdgeSet.Add(K, Opp); R->EA.Add(a); R->EB.Add(b); }
 			}
 		R->ERest.SetNum(R->EA.Num()); R->BRest.SetNum(R->BA.Num());
-		for (int i = 0; i < R->EA.Num(); i++) R->ERest[i] = V3::Distance(D->Rest[R->EA[i]], D->Rest[R->EB[i]]);
-		for (int i = 0; i < R->BA.Num(); i++) R->BRest[i] = V3::Distance(D->Rest[R->BA[i]], D->Rest[R->BB[i]]);
+		// Slack: the free fabric is a little larger than the shape it is held on, as a sewn garment
+		// is, so it can't lie smooth and gathers into folds between the yoke, the bands and the body.
+		auto Free = [&D](int a, int b)
+		{
+			return Ramp(0.05f, 0.3f, FMath::Min(D->Looseness[a], D->Looseness[b])) * (1.f - FMath::Max(D->Band[a], D->Band[b]));
+		};
+		for (int i = 0; i < R->EA.Num(); i++)
+			R->ERest[i] = V3::Distance(D->Rest[R->EA[i]], D->Rest[R->EB[i]]) * (1.f + Slack * Free(R->EA[i], R->EB[i]));
+		for (int i = 0; i < R->BA.Num(); i++)
+			R->BRest[i] = V3::Distance(D->Rest[R->BA[i]], D->Rest[R->BB[i]]) * (1.f + Slack * Free(R->BA[i], R->BB[i]));
 		R->Ms = float((FPlatformTime::Seconds() - T0) * 1000.0);
 		return R;
 	}
@@ -103,7 +137,7 @@ namespace ReflectAR
 		TSharedPtr<FBuilt> R = Pending.Get();
 		Pending.Reset();
 		if (!R.IsValid() || !R->Data.IsValid() || R->Data->Rest.Num() == 0) return;
-		Built = R->Skel; Data = R->Data;
+		Built = R->Skel; Data = R->Data; bAuthored = R->bAuthored;
 		MaxDist = MoveTemp(R->MaxDist); SkinK = MoveTemp(R->SkinK);
 		EA = MoveTemp(R->EA); EB = MoveTemp(R->EB); BA = MoveTemp(R->BA); BB = MoveTemp(R->BB);
 		ERest = MoveTemp(R->ERest); BRest = MoveTemp(R->BRest);
@@ -115,7 +149,6 @@ namespace ReflectAR
 		BodySection.Pos.SetNum(Rn); BodySection.Nrm.SetNum(Rn); BodySection.Tan.SetNum(Rn);
 		BodySection.UV = Data->UV;
 		BodySection.Tris = Data->RenderTris;
-		TAcc.SetNum(Rn); BAcc.SetNum(Rn);
 		for (int i = 0; i < Rn; i++)
 		{
 			BodySection.Pos[i] = Data->Rest[Data->RenderToSim[i]];
@@ -123,7 +156,28 @@ namespace ReflectAR
 			BodySection.Tan[i] = V4(1, 0, 0, 1);
 		}
 		Trims = FGarmentTrims::Build(*Data, Built, Spec);
+		const int Bn = Data->RibVerts.Num();
+		RibSection = FMeshSection();
+		RibSection.Pos.SetNumZeroed(Bn); RibSection.Nrm.SetNumZeroed(Bn); RibSection.Tan.Init(V4(1, 0, 0, 1), Bn);
+		RibSection.UV = Data->RibUV;
+		RibSection.Tris = Data->RibTris;
 		RestFramesOf(Built, RestFrames);
+		// the body's cross-section vs height (rest units), closing in a dome under the shoulder line
+		float MinY = Spec.Hem * Built.L;
+		for (const V3& p : Data->Rest) MinY = FMath::Min(MinY, p.Y);
+		TorsoT0 = MinY / Built.L - 0.2f; TorsoT1 = 1.06f;
+		for (int k = 0; k < TorsoRows; k++)
+		{
+			const float t = FMath::Lerp(TorsoT0, TorsoT1, k / float(TorsoRows - 1));
+			// (starting well below it: the garment's own shoulders round off there, and are sewn on)
+			const float Cap = Clamp01((t - 0.66f) / (TorsoT1 - 0.1f - 0.66f)), Dome = FMath::Sqrt(FMath::Max(1.f - Cap * Cap, 0.f));
+			for (int c = 0; c < FBodyMould::Cols; c++)
+			{
+				Built.TorsoSection(t * Built.L, c * FBodyMould::ColStep, TorsoA[k], TorsoC[k], TorsoF[k][c], TorsoB[k]);
+				TorsoF[k][c] *= Dome;
+			}
+			TorsoA[k] *= FMath::Lerp(1.f, Dome, 0.5f); TorsoB[k] *= Dome; TorsoC[k] *= Dome;
+		}
 		bHasMesh = true;
 		bSimInit = false;
 		bTopologyChanged = true;
@@ -173,12 +227,12 @@ namespace ReflectAR
 			Colliders.Emplace(c - r * Half, c + r * Half, d);
 		}
 		const V3* J = Body.J;
-		Colliders.Emplace(J[LM::LShoulder], J[LM::RShoulder], 0.05f * u);
+		Colliders.Emplace(J[LM::LShoulder], J[LM::RShoulder], (bAuthored ? 0.04f : 0.05f) * u);   // under the authored garments' sloped shoulders
 		Colliders.Emplace(J[LM::LShoulder], J[LM::LElbow], 0.043f * u);
 		Colliders.Emplace(J[LM::RShoulder], J[LM::RElbow], 0.043f * u);
 		Colliders.Emplace(J[LM::LElbow], J[LM::LWrist], 0.036f * u);
 		Colliders.Emplace(J[LM::RElbow], J[LM::RWrist], 0.036f * u);
-		Colliders.Emplace(Body.ShC, Body.HeadC - Body.Up * 0.04f * u, 0.055f * u);
+		Colliders.Emplace(Body.ShC + Body.Up * 0.05f * u, Body.HeadC - Body.Up * 0.04f * u, 0.05f * u);   // neck, clear of the yoke
 	}
 
 	void FClothGarment::Outline(TArray<FCapsuleB>& Into) const
@@ -189,6 +243,39 @@ namespace ReflectAR
 	}
 
 	// ---------------------------------------------------------------- simulation
+	/** Pushes P out of the torso: an ellipse per height that twists from the pelvis to the chest. */
+	bool FClothGarment::CollideTorso(V3& P, V3& OutN) const
+	{
+		const V3 Rel = P - Body.HipC;
+		const float y = Dot(Rel, Body.Up);
+		float f = (y / Body.TorsoLen - TorsoT0) / (TorsoT1 - TorsoT0) * (TorsoRows - 1);
+		if (f < 0.f || f >= TorsoRows - 1) return false;
+		const int k = int(f); f -= k;
+		const float a = FMath::Lerp(TorsoA[k], TorsoA[k + 1], f) * TorsoScale + Thick;
+		const V3 R = LerpU(TorsoR[k], TorsoR[k + 1], f), F = Cross(R, Body.Up);
+		const float x = Dot(Rel, R), z = Dot(Rel, F) - FMath::Lerp(TorsoC[k], TorsoC[k + 1], f);
+		// behind the section's centre the generic back; in front of it the measured surface there
+		float d = FMath::Lerp(TorsoB[k], TorsoB[k + 1], f);
+		if (z > 0.f)
+		{
+			const float fc = FMath::Abs(x) / (a * FBodyMould::ColStep);
+			d = FMath::Lerp(FBodyMould::AcrossAt(TorsoF[k], fc), FBodyMould::AcrossAt(TorsoF[k + 1], fc), f);
+		}
+		d += Thick;
+		if (d < 0.012f) return false;
+		const float q2 = x * x / (a * a) + z * z / (d * d);
+		if (q2 >= 1.f) return false;
+		// one Newton step of q - 1 = 0 along its gradient (radial near the axis, where that vanishes)
+		const float q = FMath::Sqrt(q2);
+		float gx = x / (a * a), gz = z / (d * d);
+		if (q < 0.25f) { gx = x + 1e-4f; gz = z + 1e-4f; }
+		const float gl = FMath::Sqrt(gx * gx + gz * gz);
+		OutN = (R * gx + F * gz) / gl;
+		const float Push = q < 0.25f ? FMath::Min(a, d) * (1.f - q) : (1.f - q) * q / gl;
+		P += OutN * FMath::Min(Push, 0.05f);
+		return true;
+	}
+
 	void FClothGarment::Step(float Dt, double Now)
 	{
 		if (!Body.Valid) return;
@@ -199,22 +286,34 @@ namespace ReflectAR
 		SkinTargets();
 		BuildColliders();
 		const int N = X.Num();
+		const bool bFresh = !bSimInit;
 		if (!bSimInit) { X = Target; Prev = Target; LastTarget = Target; bSimInit = true; }
+		// worn again after a while off: it comes back as it last hung, carried to the current pose
+		const bool bResume = Now - LastStep > 0.25;
+		LastStep = Now;
 		// Carry the cloth along with the body's own motion: only (1 - Follow) of each movement is
 		// left to inertia, so the garment doesn't trail behind the user but still swings locally.
 		for (int i = 0; i < N; i++)
 		{
-			const V3 Moved = (Target[i] - LastTarget[i]) * Follow;
-			X[i] += Moved; Prev[i] += Moved;
+			const V3 Moved = (Target[i] - LastTarget[i]) * (bResume ? 1.f : Follow);
+			X[i] += Moved; Prev[i] = bResume ? X[i] : Prev[i] + Moved;
 			LastTarget[i] = Target[i];
 		}
 
+		TorsoScale = Body.ShoulderW / Built.sw;
+		for (int k = 0; k < TorsoRows; k++)
+		{
+			const float t = FMath::Lerp(TorsoT0, TorsoT1, k / float(TorsoRows - 1));
+			TorsoR[k] = SlerpDir(Body.PRight, Body.Right, SmoothStep(0.f, 1.f, (t - 0.1f) / 0.7f));
+		}
+
 		Dt = FMath::Min(Dt, 1.f / 30.f);
-		const float h = Dt / Substeps, h2 = h * h;
+		// a garment put on for the first time drops into place: settle it a little before it is shown
+		const int Steps = bFresh ? Substeps * (bAuthored ? 3 : 10) : Substeps;   // an authored mesh starts out draped
+		const float h = bFresh ? 1.f / 480.f : Dt / Substeps, h2 = h * h;
 		const V3 G = V3(0.f, -9.81f, 0.f) * Spec.Density * h2;
-		const float Keep = 1.f - Clamp01(Spec.Damping * h * 60.f);
+		const float Keep = 1.f - Clamp01((bFresh ? 4.f : 1.f) * Spec.Damping * h * 60.f);
 		const float AS = Spec.Stretch / h2, AC = Spec.Compress / h2, AB = Spec.Bend / h2;
-		constexpr float Thick = 0.004f;
 		const int NC = Colliders.Num();
 		ColCenter.SetNum(NC); ColBound.SetNum(NC);
 		for (int c = 0; c < NC; c++)
@@ -225,7 +324,7 @@ namespace ReflectAR
 		}
 		const float SkinRate = h * 60.f;
 
-		for (int s = 0; s < Substeps; s++)
+		for (int s = 0; s < Steps; s++)
 		{
 			// predict (Verlet with damping)
 			for (int i = 0; i < N; i++)
@@ -234,7 +333,8 @@ namespace ReflectAR
 				Prev[i] = X[i];
 				X[i] += V + G;
 			}
-			// stretch / compression (XPBD, one iteration per small substep)
+			// stretch / compression (XPBD, one iteration per small substep). Compression is much
+			// softer than stretch but not free, so slack buckles into folds instead of vanishing.
 			for (int k = 0; k < EA.Num(); k++)
 			{
 				const int a = EA[k], b = EB[k];
@@ -257,32 +357,47 @@ namespace ReflectAR
 				const V3 Corr = D * (Dl / Len);
 				X[a] += Corr; X[b] -= Corr;
 			}
-			// tether to the body-fitted shape + body collisions
+			// sewn-on regions follow the body; the rest collides with it, on a leash
 			for (int i = 0; i < N; i++)
 			{
 				V3 P = X[i];
 				const V3 T = Target[i];
-				P = LerpU(P, T, 1.f - FMath::Pow(1.f - SkinK[i], SkinRate));
-				const V3 Off = P - T;
+				if (SkinK[i] > 0.f) P = LerpU(P, T, 1.f - FMath::Pow(1.f - SkinK[i], SkinRate));
 				const float M = MaxDist[i];
-				if (Off.SizeSquared() > M * M) P = T + Normalized(Off) * M;
-				for (int c = 0; c < NC; c++)
+				if (M > 0.02f)                                   // the yoke is sewn on: nothing to collide
 				{
-					if ((ColCenter[c] - P).SizeSquared() > ColBound[c]) continue;   // outside the capsule's bounding sphere
-					const FCapsuleB& Cap = Colliders[c];
-					const V3 Nrm = P - Cap.Closest(P);
-					const float R = Cap.r + Thick, Dd = Nrm.SizeSquared();
-					if (Dd < R * R && Dd > 1e-10f)
+					V3 Nrm;
+					for (int c = FirstLimb; c < NC; c++)
 					{
-						const float Dist = FMath::Sqrt(Dd);
-						P += Nrm * ((R - Dist) / Dist);
-						// friction: kill some tangential motion while in contact
+						if ((ColCenter[c] - P).SizeSquared() > ColBound[c]) continue;   // outside the capsule's bounding sphere
+						const FCapsuleB& Cap = Colliders[c];
+						Nrm = P - Cap.Closest(P);
+						const float R = Cap.r + Thick, Dd = Nrm.SizeSquared();
+						if (Dd < R * R && Dd > 1e-10f)
+						{
+							const float Dist = FMath::Sqrt(Dd);
+							P += Nrm * ((R - Dist) / Dist);
+							// friction: kill some tangential motion while in contact
+							const V3 Vel = P - Prev[i];
+							const V3 Vn = Nrm * (Dot(Vel, Nrm) / Dd);
+							Prev[i] += (Vel - Vn) * Friction;
+						}
+					}
+					// the torso last: where an arm presses into a wide body, the cloth stays outside the body
+					if (CollideTorso(P, Nrm))
+					{
 						const V3 Vel = P - Prev[i];
-						const V3 Vn = Nrm * (Dot(Vel, Nrm) / Dd);
-						Prev[i] += (Vel - Vn) * 0.3f;
+						Prev[i] += (Vel - Nrm * Dot(Vel, Nrm)) * Friction;
 					}
 				}
-				X[i] = P;
+				V3 Off = P - T;
+				// Fabric barely stretches, but a few solver passes over a garment's whole length leave
+				// it sagging like rubber: it may not hang lower than a little below where its cut
+				// puts it. In and out, and sideways, it is free up to the leash.
+				const float Down = Dot(Off, Body.Up);
+				if (Down < -MaxSag) Off -= Body.Up * (Down + MaxSag);
+				if (Off.SizeSquared() > M * M) Off = Normalized(Off) * M;
+				X[i] = T + Off;
 			}
 		}
 		UpdateRenderMesh();
@@ -296,16 +411,26 @@ namespace ReflectAR
 		GarmentMesher::Normals(X, Data->Tris, SimN);
 		const TArray<int32>& ToSim = Data->RenderToSim;
 		for (int r = 0; r < ToSim.Num(); r++) { BodySection.Pos[r] = X[ToSim[r]]; BodySection.Nrm[r] = SimN[ToSim[r]]; }
-		Tangents();
+		Tangents(BodySection);
+		// ribbed bands: a layer just above the cloth
+		constexpr float Lift = 0.0025f;
+		for (int r = 0; r < Data->RibVerts.Num(); r++)
+		{
+			const FGarmentMeshData::FRibVert& V = Data->RibVerts[r];
+			const V3 n = Normalized(LerpU(SimN[V.A], SimN[V.B], V.T));
+			RibSection.Pos[r] = LerpU(X[V.A], X[V.B], V.T) + n * Lift;
+			RibSection.Nrm[r] = n;
+		}
+		if (RibSection.Tris.Num() > 0) Tangents(RibSection);
 	}
 
 	/** Per-vertex tangent along the fabric's u direction, with handedness. */
-	void FClothGarment::Tangents()
+	void FClothGarment::Tangents(FMeshSection& Sec)
 	{
-		const TArray<V3>& P = BodySection.Pos;
-		for (V3& t : TAcc) t = V3::ZeroVector;
-		for (V3& b : BAcc) b = V3::ZeroVector;
-		const TArray<int32>& Rt = Data->RenderTris; const TArray<V2>& UV = Data->UV;
+		const TArray<V3>& P = Sec.Pos;
+		TAcc.Init(V3::ZeroVector, P.Num());
+		BAcc.Init(V3::ZeroVector, P.Num());
+		const TArray<int32>& Rt = Sec.Tris; const TArray<V2>& UV = Sec.UV;
 		for (int t = 0; t < Rt.Num(); t += 3)
 		{
 			const int i0 = Rt[t], i1 = Rt[t + 1], i2 = Rt[t + 2];
@@ -320,12 +445,12 @@ namespace ReflectAR
 		}
 		for (int r = 0; r < P.Num(); r++)
 		{
-			const V3 n = BodySection.Nrm[r];
+			const V3 n = Sec.Nrm[r];
 			V3 T = TAcc[r] - n * Dot(n, TAcc[r]);
 			if (T.SizeSquared() < 1e-12f) T = Cross(n, FMath::Abs(n.Y) < 0.9f ? VUp : VRight);
 			T = Normalized(T);
 			const float W = Dot(Cross(n, T), BAcc[r]) < 0.f ? -1.f : 1.f;
-			BodySection.Tan[r] = V4(T.X, T.Y, T.Z, W);
+			Sec.Tan[r] = V4(T.X, T.Y, T.Z, W);
 		}
 	}
 }

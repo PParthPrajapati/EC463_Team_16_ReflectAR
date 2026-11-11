@@ -12,3 +12,6 @@ unreal/Build/
 
 # setup scripts
 unreal/build.log
+
+# test runs (run_latency_test.sh, run_shoulder_test.sh)
+test_runs/

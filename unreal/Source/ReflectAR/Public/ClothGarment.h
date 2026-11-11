@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GarmentTrims.h"
+#include "GarmentAsset.h"
 #include "Async/Future.h"
 
 namespace ReflectAR
@@ -8,10 +9,11 @@ namespace ReflectAR
 	/**
 	 * A garment simulated as cloth. The seamless mesh from GarmentMesher is skinned to six bones
 	 * driven by the tracked skeleton; that skinned shape is the "body-fitted" target. An XPBD
-	 * solver then simulates the fabric: inextensible stretch, soft compression (so it buckles into
-	 * wrinkles), bending, gravity, inertia, damping and collisions against capsules fitted to the
-	 * user's body. Each vertex is tethered to its skinned target by a max distance that is ~0 at
-	 * the collar and shoulders and grows toward the hem and cuffs, which is how real garments hang.
+	 * solver then simulates the fabric: inextensible stretch, soft compression (so slack buckles into
+	 * folds), bending, gravity, inertia, damping and collisions against the user's body (a torso of
+	 * elliptical sections plus limb capsules). The garment is cut with real ease, sewn to the body's
+	 * motion only at the yoke, collar and sleeve caps, and hangs free from there: the drape comes
+	 * from the cloth resting on the body, with a leash to the skinned target as a safety limit.
 	 *
 	 * The solver runs on the welded mesh. What is drawn (BodySection) is a copy split along the UV
 	 * seams, with normals from the welded mesh (no shading seams) and tangents for the normal map,
@@ -23,8 +25,8 @@ namespace ReflectAR
 		FClothGarment(const FGarmentSpec& InSpec, const FBodyRig& InBody) : Spec(InSpec), Body(InBody) {}
 
 		const FGarmentSpec& Spec;
-		int Substeps = 2;                 // the cloth inherits body motion (Follow), so 2 is enough
-		float Follow = 0.9f;              // share of body motion the cloth inherits directly
+		int Substeps = 8;                 // small steps keep the fabric from stretching
+		float Follow = 0.85f;              // share of body motion the cloth inherits directly
 		float Alpha = 1.f;
 
 		float LastBuildMs = 0, LastStepMs = 0;
@@ -33,9 +35,9 @@ namespace ReflectAR
 		bool HasMesh() const { return bHasMesh; }
 
 		FMeshSection BodySection;
+		FMeshSection RibSection;          // ribbed collar / hem / cuffs, empty if the garment has none
 		TSharedPtr<FGarmentTrims> Trims;
 
-		void ResetCloth() { bSimInit = false; }
 		/** Start (re)generating this garment for the current body if needed. Cheap; call every frame. */
 		void Prepare(double Now);
 		/** Simulates one frame and refreshes BodySection / Trims. */
@@ -44,7 +46,7 @@ namespace ReflectAR
 		bool ConsumeTopologyChanged() { const bool b = bTopologyChanged; bTopologyChanged = false; return b; }
 
 		/** How far the cloth may stand off the body (ease plus drape), with a little to spare. */
-		float Room() const { return ((0.03f + Spec.Ease) * Spec.Drape + 0.01f) * Body.Unit(); }
+		float Room() const { return (Spec.Ease + 0.03f * Spec.Drape + 0.01f) * Body.Unit(); }
 		/** Where the garment covers the torso: its torso and shoulder colliders grown by Room(). */
 		void Outline(TArray<FCapsuleB>& Into) const;
 
@@ -56,21 +58,23 @@ namespace ReflectAR
 			TArray<float> MaxDist, SkinK, ERest, BRest;
 			TArray<int32> EA, EB, BA, BB;
 			float Ms = 0;
+			bool bAuthored = false;
 		};
-		static TSharedPtr<FBuilt> Generate(FRestSkeleton Skel, const FGarmentSpec* Spec);
+		static TSharedPtr<FBuilt> Generate(FRestSkeleton Skel, const FGarmentSpec* Spec, TSharedPtr<const FGarmentAsset> Asset);
 		void ApplyPending(double Now);
 		bool Drifted() const;
 		void SkinTargets();
 		void BuildColliders();
+		bool CollideTorso(V3& P, V3& OutN) const;
 		void UpdateRenderMesh();
-		void Tangents();
+		void Tangents(FMeshSection& Sec);
 
 		const FBodyRig& Body;
 		TSharedPtr<FGarmentMeshData> Data;
 		FRestSkeleton Built;
-		bool bHasMesh = false, bSimInit = false, bTopologyChanged = false;
+		bool bHasMesh = false, bSimInit = false, bTopologyChanged = false, bAuthored = false;
 		TFuture<TSharedPtr<FBuilt>> Pending;
-		double DriftSince = -1, LastApplied = -100, FirstApplied = -100;
+		double DriftSince = -1, LastApplied = -100, FirstApplied = -100, LastStep = -100;
 
 		// simulation state
 		TArray<V3> X, Prev, Target, LastTarget;
@@ -81,6 +85,14 @@ namespace ReflectAR
 		TArray<FCapsuleB> Colliders;
 		TArray<V3> ColCenter;
 		TArray<float> ColBound;
+		static constexpr int TorsoRows = 48, FirstLimb = 5;       // Colliders[0..4]: torso levels, for Outline() only
+		static constexpr float Thick = 0.004f, Friction = 0.3f;
+		static constexpr float MaxSag = 0.012f;                   // how far the cloth may hang below its cut (m)
+		// the torso's section per height: half-width, centre forward of the joints, half-depth behind
+		// it and in front of it (at FBodyMould's columns: the front follows the mould of the body)
+		float TorsoA[TorsoRows] = {}, TorsoC[TorsoRows] = {}, TorsoB[TorsoRows] = {}, TorsoF[TorsoRows][FBodyMould::Cols] = {};
+		float TorsoT0 = 0, TorsoT1 = 1, TorsoScale = 1;
+		V3 TorsoR[TorsoRows];
 
 		// render mesh (split at UV seams)
 		TArray<V3> SimN, TAcc, BAcc;

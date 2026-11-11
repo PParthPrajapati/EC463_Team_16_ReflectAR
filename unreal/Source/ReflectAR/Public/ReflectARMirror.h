@@ -62,6 +62,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") float LeadMs = 0.f;
 	/** Trim the hands / bare arms / head occluders to perception's person mask (O toggles). */
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bTrimToMask = true;
+	/** Latency test (L toggles): prediction off, a large marker on the right wrist, and a CSV of
+	 *  when each perception frame arrived, was picked up and reached the screen
+	 *  (Saved/ReflectAR/latency_unreal.csv; joined with perception's --latency-log CSV). */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bLatencyTest = false;
 
 	// physical lighting: lux, with a camera exposure of EV100 ~10 (ISO 100, 1/60 s, f/4)
 	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float KeyLux = 3000.f;
@@ -73,6 +77,15 @@ public:
 	ReflectAR::FTrackingClient* Client() const { return Tracking.Get(); }
 	const ReflectAR::FBodyRig& Body() const { return Rig; }
 	int32 Current = 0, Selected = -1;
+	/** Live swipe feedback: how far the user's hand has carried the carousel toward the next (+)
+	 *  or previous (-) garment, -1..1. 0 when no swipe is under way; it returns to 0 when a swipe
+	 *  completes (Current changes then) or is abandoned. */
+	float BrowseDrag = 0.f;
+	/** Which hand is swiping ("left" / "right"), or empty. */
+	FString BrowseHand;
+	/** Direction (+1 next, -1 previous) and local time of the last garment change. */
+	int32 LastBrowseDir = 0;
+	double LastBrowseTime = -10;
 	bool bTracked = false;
 	FString LatencyLine;
 	FString ToastText;
@@ -95,8 +108,8 @@ private:
 		TUniquePtr<ReflectAR::FClothGarment> Sim;
 		UProceduralMeshComponent* Mesh = nullptr;
 		UProceduralMeshComponent* Trims = nullptr;
-		UMaterialInstanceDynamic* Opaque[3] = {};   // fabric, plastic, metal
-		UMaterialInstanceDynamic* Fade[3] = {};
+		UMaterialInstanceDynamic* Opaque[4] = {};   // fabric, plastic, metal, ribbed knit
+		UMaterialInstanceDynamic* Fade[4] = {};
 		int bFading = -1;
 		bool bHasTrims = false;
 	};
@@ -139,4 +152,17 @@ private:
 	void UpdateCamera();
 	void SetParams(bool bMaskOn);
 	void LogStats(float Dt);
+	void DevTick(double NowT);
+	float DevShotEvery = -1.f, DevCycleEvery = 0.f;
+	double DevNextShot = 0, DevNextCycle = 0;
+	int32 DevShots = 0;
+
+	// ---- latency test: the render thread logs the first present after each new perception frame
+	struct FLatencyLog;
+	TSharedPtr<FLatencyLog, ESPMode::ThreadSafe> LatLog;
+	FDelegateHandle PresentHandle;
+	int32 LatLastSeq = -1;
+	bool bPredictBeforeTest = true;
+	void SetLatencyTest(bool bOn);
+	void LatencyTick();
 };

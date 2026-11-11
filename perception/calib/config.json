@@ -100,6 +100,12 @@
     "max_horizon_s": 0.25,
     "blend_tc_s": 0.015
   },
+  "shape": {
+    "_note": "The user's build, measured from the depth camera (bodyshape.py): torso half-width and half-depth at six heights, a 16 x 5 mould of the torso's front and the shoulder tops, averaged over time_constant_s while they face the camera (max_turn: shoulder depth difference / shoulder width). Garments are cut to it. Needs a RealSense; with a webcam the renderer uses the person mask's silhouette instead.",
+    "time_constant_s": 1.5,
+    "max_turn": 0.3,
+    "min_samples": 12
+  },
   "gestures": {
     "_note": "swipe distances / speeds are in shoulder widths (sw) in the 2D image, so they don't depend on distance. swipe_direction: natural = like scrolling (move the hand right to bring in the item on the left), pointer = the opposite.",
     "swipe_direction": "natural",

@@ -36,6 +36,7 @@ from depth import MonoDepth, IN_H, IN_W
 from filters import OneEuro, PosePredictor
 from geometry import Intrinsics, skeleton_distance, CameraToMirror
 from gestures import Gestures, SIDES
+from bodyshape import BodyShape
 import realsense
 
 L_EYE, R_EYE = 2, 5
@@ -83,6 +84,7 @@ class Camera:
     def read(self, last_seq):
         with self.cond:
             self.cond.wait_for(lambda: self.seq != last_seq, timeout=1.0)
+            self.read_recv = self.stamp                  # a webcam frame's stamp is its arrival time
             return self.frame, self.stamp, self.seq
 
 
@@ -93,8 +95,14 @@ class Streamer:
     neither the encode nor the larger write delays the pose.
     """
 
-    def __init__(self, host, port, jpeg_width=960, jpeg_quality=75):
+    def __init__(self, host, port, jpeg_width=960, jpeg_quality=75, latency_log=None):
         self.jpeg_w, self.jpeg_q = jpeg_width, jpeg_quality
+        # latency test: one CSV row per sent frame with its per-stage host times (s, time.time())
+        self.lat_log = None
+        if latency_log:
+            self.lat_log = open(latency_log, "w", buffering=1)
+            self.lat_log.write("seq,tracked,t_exposure,t_arrive,t_pose,t_joints,t_send\n")
+            print(f"[latency] logging per-stage times to {latency_log}")
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind((host, port))
@@ -145,6 +153,10 @@ class Streamer:
                 msg["t_send"] = time.time()
                 body = json.dumps(msg, separators=(",", ":")).encode()
                 conn.sendall(b"J" + struct.pack(">I", len(body)) + body)
+                if self.lat_log and "lat" in msg:
+                    L = msg["lat"]
+                    self.lat_log.write(f"{msg['seq']},{int(msg['tracked'])},{L['exposure']:.6f},{L['arrive']:.6f},"
+                                       f"{L['pose']:.6f},{L['joints']:.6f},{msg['t_send']:.6f}\n")
                 if mask is not None:
                     t_m, m = mask
                     conn.sendall(b"M" + struct.pack(">IdHH", m.size + 12, t_m, m.shape[1], m.shape[0]) + m.tobytes())
@@ -260,6 +272,10 @@ class RangeCheck:
         return self.state
 
 
+def rng_ok_for_shape(z, rng):
+    return rng[0] <= z <= rng[1]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="calib/config.json")
@@ -269,6 +285,8 @@ def main():
     ap.add_argument("--calib-dist", type=float, help="stand exactly this many metres from the camera; "
                     "calibrates the distance estimate and exits")
     ap.add_argument("--log", action="store_true", help="print tracking state every second")
+    ap.add_argument("--latency-log", metavar="CSV", help="latency test: write each frame's per-stage times "
+                    "(exposure, arrival, pose done, joints ready, sent) to this CSV")
     ap.add_argument("--ep-log", action="store_true", help="ONNX Runtime info logging: shows how many nodes of "
                     "each model Core ML / TensorRT took and what fell back to the CPU")
     args = ap.parse_args()
@@ -311,8 +329,10 @@ def main():
     H, W = frame.shape[:2]
     K = Intrinsics(**cam.intrinsics) if sensor else Intrinsics.load(cc, W, H)
     to_mirror = CameraToMirror(cfg["camera_pose"])
-    net = Streamer(cfg["net"]["host"], cfg["net"]["port"], cfg["net"]["jpeg_width"], cfg["net"]["jpeg_quality"])
+    net = Streamer(cfg["net"]["host"], cfg["net"]["port"], cfg["net"]["jpeg_width"], cfg["net"]["jpeg_quality"],
+                   args.latency_log)
     gest = Gestures(cfg["gestures"])
+    shape = BodyShape(cfg.get("shape")) if sensor else None    # the user's build, from measured depth
     rng = RangeCheck(*cfg["range_m"])
     fj, fe = cfg["filters"]["joints"], cfg["filters"]["eye"]
     f_joints, f_eye, f_dist = PosePredictor(**fj), PosePredictor(**fe), OneEuro(0.5, 0.3)
@@ -339,12 +359,14 @@ def main():
             continue
         last_idle_run = stamp
         t0 = time.time()
+        t_arrive = cam.read_recv                      # when this frame reached this machine
         t_cap = stamp - cam_lat
         depth.submit(frame)
         res = pose(frame)
-        pose_ms = 0.9 * pose_ms + 0.1 * (time.time() - t0) * 1000
+        t_pose = time.time()
+        pose_ms = 0.9 * pose_ms + 0.1 * (t_pose - t0) * 1000
         msg = {"t": t_cap, "seq": seq, "tracked": False, "range": "none", "dist": 0.0,
-               "events": [], "fist_progress": 0.0, "fist_hand": "",
+               "events": [], "fist_progress": 0.0, "fist_hand": "", "swipe_progress": 0.0, "swipe_hand": "",
                "cam": {**K.as_dict(), "pos": cfg["camera_pose"]["pos_m"],
                        "tilt": cfg["camera_pose"].get("tilt_down_deg", 0.0)},
                "screen": cfg["screen"], "predict": pred_cfg}
@@ -385,6 +407,8 @@ def main():
             #     so the 3D skeleton always lands exactly on the person in the image
             Z = np.maximum(z_root + (world[:, 2] - world[list(TORSO), 2].mean()), 0.2)
             if sensor:
+                # a deeper body's centre is further behind its surface than the default says
+                hip_off = shape.hip_offset(float(np.linalg.norm(world[23] - world[24])) / 2, dc["torso_surface_offset_m"])
                 # measured depth wherever the joint's pixel lands on the body near where BlazePose
                 # puts it; the relative-z guess fills joints that are hidden or off the depth map
                 for i in range(len(Z)):
@@ -392,10 +416,13 @@ def main():
                         z = depth.joint(*uv[i], W, H, Z[i])
                         if z is not None:
                             Z[i] = z + (dc["face_surface_offset_m"] if i in FACE else
+                                        hip_off if i in (23, 24) else
                                         dc["torso_surface_offset_m"] if i in TORSO else dc["limb_surface_offset_m"])
             P_c = np.stack([(uv[:, 0] - K.cx) * Z / K.fx, (uv[:, 1] - K.cy) * Z / K.fy, Z], axis=1)
             P_m, V_m = f_joints(to_mirror(P_c), stamp, vis)
             eye, eye_v = f_eye(to_mirror((P_c[L_EYE] + P_c[R_EYE]) / 2), stamp)
+            if sensor and rng_ok_for_shape(z_root, cfg["range_m"]):
+                msg["shape"] = shape.update(stamp, lambda us, vs: depth.line(us, vs, W, H), uv, P_c, vis, K.fx, K.fy)
             dist = z_root
             z_skel_log, z_da_log, scale = z_skel, z_da, z_fused / max(z_skel, 1e-3)
 
@@ -419,12 +446,15 @@ def main():
                 msg["events"] = gest.update(stamp, P_m, vis, fists, uv)
                 msg["fist_progress"] = round(gest.progress, 3)
                 msg["fist_hand"] = gest.fist_side or ""
+                msg["swipe_progress"], msg["swipe_hand"] = round(gest.swipe_progress, 3), gest.swipe_hand
             else:
                 gest.reset()
             last_seen = stamp
         else:
             rng(None)
             gest.reset()
+            if shape and stamp - last_seen > 1.0:
+                shape.reset()
             if stamp - last_seen > 1.0:
                 f_joints.reset(); f_eye.reset(); f_dist.reset()
 
@@ -433,6 +463,8 @@ def main():
         fps = 0.9 * fps + 0.1 / max(dt, 1e-3)
         msg["proc_fps"], msg["depth_hz"] = round(fps, 1), round(depth.hz, 1)
         msg["proc_ms"] = round(dt * 1000, 1)
+        # per-stage host times for the latency test (Unreal logs its own stages against these)
+        msg["lat"] = {"exposure": round(stamp, 6), "arrive": round(t_arrive, 6), "pose": round(t_pose, 6), "joints": round(time.time(), 6)}
         mask_w = cfg["net"].get("mask_width", 256)
         mask = (t_cap, frame_mask(res, W, H, mask_w)) if res and msg["tracked"] and mask_w else None
         net.push(msg, None if args.no_image else (t_cap, frame), mask)
