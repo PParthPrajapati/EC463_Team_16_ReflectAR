@@ -31,6 +31,7 @@ The system has two programs that talk over a local TCP socket:
 | **Depth Anything V2 Metric-Indoor-Small** | Metric depth from a single camera, when there's no RealSense |
 | **One-Euro filter + constant-velocity Kalman filter** | Smoothing joints and predicting pose ahead in time (`filters.py`) |
 | **TensorFlow + tf2onnx, ONNX** | Only used by `tools/` to convert the original models to `.onnx`. Not needed to run ReflectAR |
+| **SciPy, Triangle** (`triangle` package) | Only used by `garments/make_garments.py` to author the garment FBX files. They are imported by that script but are not listed in `requirements.txt`; install them into the virtual environment before regenerating garments. Not needed to run ReflectAR |
 
 All model files are already committed in `perception/models/`, in two forms: `.onnx` for ONNX Runtime, and the originals (`.tflite`, plus the OpenVINO IR `.xml`/`.bin` for depth) for OpenVINO. The pose and hand models also have a `_fp16.onnx` copy for the Apple Neural Engine. Nothing has to be downloaded.
 
@@ -42,14 +43,14 @@ All model files are already committed in `perception/models/`, in two forms: `.o
 | **C++** | Everything in `Source/ReflectAR/` |
 | **Procedural Mesh Component** | The simulated garments, their closures, the body occluders and the camera feed, rebuilt every frame |
 | **Cloth shading model, virtual shadow maps, contact shadows** | Fabric with sheen and weave normal maps, soft shadows from a 3000 lux key light |
-| **Python Editor Script Plugin** | `Content/Python/reflectar_setup.py` builds the materials on the first editor start |
+| **Python Editor Script Plugin** | `Content/Python/reflectar_setup.py` builds the materials, and `reflectar_garments.py` imports the garment FBX files, when they are missing at editor start |
 | **Slate HUD** | On-screen prompts and the garment carousel (`SReflectARHud`) |
 | **Kooima off-axis projection** | Renders the scene from the tracked eye position, as a mirror would show it (`UMirrorLocalPlayer`) |
 | **Signed-distance fields + surface nets** | Generates each garment as one seamless mesh fitted to the user (`GarmentMesher.cpp`) |
 | **XPBD cloth simulation** | Custom position-based cloth solver with body-capsule collisions (`ClothGarment.cpp`) |
 | **Mask-trimmed occluders** | Hide the garment behind your hands, arms and head, trimmed per pixel to the person mask (`BodyProxy.cpp`, `M_Proxy`) |
 
-The renderer was a Unity 6 project (HDRP / URP) until this port; it is in the git history (`main` before the Unreal branch) if you need it.
+The renderer was a Unity 6 project (HDRP / URP) until the port to Unreal (commit `8a50cbe`); the Unity version is in the git history before that commit if you need it. Where this README quotes a measurement taken "with the Unity renderer", it was made before the port.
 
 ---
 
@@ -65,14 +66,21 @@ ReflectAR/
 ├── run_perception.sh            # starts the perception service (macOS / Linux)
 ├── run_perception.bat           # starts the perception service (Windows)
 ├── run_mirror.sh                # macOS: perception + the packaged app (lowest CPU / battery)
+├── run_latency_test.sh          # macOS: latency test, perception with per-stage timing + the app, then a report
+├── run_shoulder_test.sh         # macOS: shoulder alignment test, BlazePose vs. shoulders you click by hand
 ├── .mcp.json                    # points Claude Code at the Unreal editor's MCP server (127.0.0.1:8000)
 ├── .gitattributes               # keeps .bat/.ps1 in CRLF and .sh in LF
+├── garments/                    # authors the garments: make_garments.py (+ gp_*.py) writes the five FBX files
+│   ├── *.fbx                    # heavyweight_tee, crewneck_sweatshirt, satin_blouse, flannel_overshirt, bomber_jacket
+│   └── previews/                # PNG renders of each garment, and body-build / shoulder comparisons
 ├── perception/                  # Python tracking service: camera → pose/depth → TCP 127.0.0.1:5566
 │   ├── requirements.txt         # Python dependencies, with the right runtime per platform
 │   ├── server.py                # main service: camera → tracking → TCP stream
 │   ├── realsense.py             # Intel RealSense capture + aligned depth
 │   ├── backend.py               # ONNX Runtime / OpenVINO model loading and device choice
-│   ├── fake_server.py           # synthetic skeleton stream, for testing without a camera
+│   ├── bodyshape.py             # measures the user's torso (widths, front mould, shoulder tops) from depth
+│   ├── synthbody.py             # synthetic bodies and their depth images, for fake_server.py and the self-test
+│   ├── fake_server.py           # synthetic skeleton (and optionally body shape) stream, for testing without a camera
 │   ├── calibrate_intrinsics.py  # checkerboard camera calibration
 │   ├── blazepose.py             # BlazePose detector + landmarks + person mask + ROI tracking
 │   ├── handpose.py              # hand landmarks + fist classifier
@@ -82,16 +90,22 @@ ReflectAR/
 │   ├── gestures.py              # swipe + fist-hold detection
 │   ├── calib/                   # config.json (all tuning) + depth_calib.json
 │   ├── models/                  # .onnx, .tflite and OpenVINO IR model files (~500 MB, committed)
-│   └── tools/                   # model converters (only needed if a model changes), realsense_check.py
+│   └── tools/                   # model converters (only needed if a model changes), realsense_check.py and
+│                                # realsense_specs.py (D415 bench), bodyshape_selftest.py, latency_report.py
+│                                # (used by run_latency_test.sh), shoulder_click.py / shoulder_offset.py (shoulder tests)
 └── unreal/                      # Unreal Engine 5.8 project (the renderer)
     ├── ReflectAR.uproject       # engine version + plugins
     ├── Config/                  # game mode, local player, renderer settings (DefaultEngine.ini),
     │                            # editor defaults (DefaultEditorSettings.ini, ...PerProjectUserSettings.ini)
-    ├── Content/Python/          # init_unreal.py + reflectar_setup.py: build the materials (Content/ReflectAR/)
+    ├── Content/ReflectAR/       # the materials, and Garments/ (the imported FBX meshes), as committed .uasset files
+    ├── Content/Python/          # init_unreal.py runs at editor start; reflectar_setup.py builds the materials,
+    │                            # reflectar_garments.py imports garments/*.fbx
     └── Source/ReflectAR/
-        ├── Public/, Private/    # ReflectARMirror (the app), TrackingClient, BodyRig, BodyProxy,
-        │                        # GarmentMesher, ClothGarment, GarmentTrims, GarmentSpec,
-        │                        # ReflectARGameMode (spawns the mirror, draws the HUD), MirrorLocalPlayer
+        ├── Public/, Private/    # ReflectARMirror (the app), TrackingClient, BodyRig (body shape, FBodyMould),
+        │                        # BodyProxy, GarmentAsset + GarmentFit (FBX garments, fitted to the body),
+        │                        # GarmentMesher (generated fallback mesh), ClothGarment, GarmentTrims, GarmentSpec,
+        │                        # SReflectARHud (Slate HUD), ReflectARGameMode (spawns the mirror, draws the HUD),
+        │                        # MirrorLocalPlayer
         └── ReflectAR.Build.cs
 ```
 
@@ -168,7 +182,7 @@ It prints which device each model ended up on, for example `pose_landmark_full=C
 ### 4. Open the Unreal project
 
 1. Open `unreal/ReflectAR.uproject` (double-click, or *Browse* in the launcher). Unreal asks to build the `ReflectAR` module: choose **Yes**. On macOS you can instead run *Generate Xcode Project* from the `.uproject`'s context menu and build the `ReflectAREditor` target.
-2. On the first editor start, `Content/Python/init_unreal.py` runs `reflectar_setup.py`, which writes the materials and the parameter collection to `Content/ReflectAR/` (the Output Log shows `ReflectAR setup: materials written to /Game/ReflectAR`). They are generated, not committed; to rebuild them, run `import importlib, reflectar_setup; importlib.reload(reflectar_setup); reflectar_setup.build()` in the Output Log's Python console.
+2. On the first editor start, `Content/Python/init_unreal.py` runs `reflectar_setup.py`, which writes the materials and the parameter collection to `Content/ReflectAR/` if `M_Proxy` is not there yet (the Output Log shows `ReflectAR setup: materials written to /Game/ReflectAR`). It also imports any missing garment FBX files from `garments/` into `Content/ReflectAR/Garments/`. The `.uasset` files for both are committed, so a fresh clone normally already has them; the scripts only fill in what is missing. To rebuild the materials, run `import importlib, reflectar_setup; importlib.reload(reflectar_setup); reflectar_setup.build()` in the Output Log's Python console.
 3. Nothing else needs setting up: the project opens an empty map, and `AReflectARGameMode` spawns the mirror (`AReflectARMirror`), its lights and its HUD when you press Play.
 
 ### 5. Camera permissions
@@ -213,7 +227,15 @@ Stand **1–3 m** from the screen. Outside that range a prompt shows ("Please st
 | `--no-image` | Don't stream the camera image to the renderer |
 | `--calib-dist <m>` | Distance calibration (see below); exits when done |
 | `--ep-log` | Show how much of each model Core ML / TensorRT took and what fell back to the CPU |
+| `--latency-log <csv>` | Write each frame's per-stage times (exposure, arrival, pose done, joints ready, sent) to a CSV; used by `run_latency_test.sh` |
 | `--config <path>` | Use a different config file (default `calib/config.json`) |
+
+### Test scripts (macOS, RealSense)
+
+Both need the D415 and ask for your password, because macOS only lets root open it. Results go to `test_runs/`, which git ignores.
+
+- `./run_latency_test.sh` starts perception with per-stage timing (`--latency-log`) and the Unreal editor in game mode. In the app, press **L**, move for about 60 s, press **L** again, then quit with Cmd+Q. It then prints a per-stage latency table (`tools/latency_report.py`).
+- `./run_shoulder_test.sh [label]` captures 10 frames of you standing still, facing the camera, then opens a window where you click both shoulder joints on each frame, and prints how far BlazePose's shoulders are from your clicks (`tools/shoulder_click.py`). `tools/shoulder_offset.py` is an older version of the same test that uses stickers and tape-measured distances.
 
 ### Running without a camera
 
@@ -225,9 +247,29 @@ cd perception
 .venv/bin/python fake_server.py --script swipe    # repeatedly triggers swipes
 .venv/bin/python fake_server.py --script fist     # triggers the fist-hold select
 .venv/bin/python fake_server.py --dist 0.8        # stand too close, to test range prompts
+.venv/bin/python fake_server.py --script belly --mask   # still pose, hands on the belly, with a person mask (also: --script shoulders)
+.venv/bin/python fake_server.py --build belly --shoulders sloped   # also send a measured body shape
 ```
 
-Then press Play in Unreal.
+| Flag | Effect |
+|---|---|
+| `--script none\|swipe\|fist\|belly\|shoulders` | The motion: `none` walks and waves; `swipe` and `fist` trigger those gestures; `belly` and `shoulders` hold still with the hands resting on the belly or the shoulders, for occlusion tests |
+| `--dist <m>` | Distance from the screen (default 1.8) |
+| `--port <n>` | Override the port in `config.json` |
+| `--mask` | Also send a person mask drawn from the skeleton |
+| `--build none\|slender\|average\|heavy\|belly\|chest` | Send a `shape` message for a synthetic body, as the depth camera would (see [Body shape](#how-it-works)). Default `none`: no shape is sent |
+| `--shoulders normal\|sloped\|square` | With `--build`: how steeply the shoulders slope |
+| `--no-mould` | With `--build`: send only the six widths and depths (`a`, `d`), without the mould (`ga`, `gz`) or the shoulder tops (`sh`) |
+
+Then press Play in Unreal. With `--build`, the garments are cut to the synthetic body. This is the way to check the renderer's body-shape fit on a machine with no RealSense, but it only shows that the renderer follows the numbers it is sent.
+
+To check the measurement itself without a camera, run the self-test from `perception/`:
+
+```bash
+.venv/bin/python tools/bodyshape_selftest.py
+```
+
+It renders a depth image of each synthetic body in `synthbody.py` (slender, average, heavy, belly and chest builds, and the average one with normal, sloped and square shoulders), adds a little depth noise, runs the same `BodyShape` code that `server.py` uses, and prints how far the measured mould, widths and shoulder tops are from the body that was rendered. It ends with `OK` if the mould is within 12 mm everywhere, or `FAILED` otherwise.
 
 ---
 
@@ -242,6 +284,7 @@ Then press Play in Unreal.
 | Pose prediction on / off (A/B test) | – | P |
 | Occlusion trimmed to the person mask on / off (A/B test) | – | O |
 | Prediction lead −5 / +5 ms (Mirror mode) | – | [ / ] |
+| Latency test on / off (see `run_latency_test.sh`) | – | L |
 | Quit | – | Esc |
 
 There are 5 upper-body garments (`GarmentSpec.cpp`), each made from an FBX mesh in `garments/`: heavyweight tee, crewneck sweatshirt, satin blouse, flannel overshirt and bomber jacket. The same toggles (and the light levels `KeyLux`, `FillLux`, `Ambient`) are properties of `AReflectARMirror`, editable in the *Details* panel while playing.
@@ -258,6 +301,7 @@ All tuning lives in `perception/calib/config.json`. Each section has a `_note` e
 - **Camera intrinsics (recommended):** print a 9×6 inner-corner checkerboard, measure one square, then run `.venv/bin/python calibrate_intrinsics.py --square <metres>` from `perception/`. Show the board at 15–25 angles and distances, pressing SPACE for each one, then press Q to solve. This writes `calib/intrinsics.json`. Until you do, the field of view comes from `camera.hfov_deg`.
 - **Screen and camera position:** `screen` (physical size in metres and resolution) and `camera_pose` (the camera's position relative to the screen's lower-left corner) default to a 14" MacBook Pro. Measure and change them for any other display, including the 43" mirror build.
 - **Camera:** `camera.index` picks the camera if the wrong one opens, and `camera.api` the capture API (see [Camera permissions](#5-camera-permissions)).
+- **Body shape (`shape`, RealSense only):** `time_constant_s` is how long the measurements are averaged over (1.5 s), `max_turn` is how far the user may turn from facing the camera before samples are ignored (the difference in the two shoulders' depth divided by the shoulder width), and `min_samples` is how many samples a height or cell needs before it is sent. See [How it works](#how-it-works).
 - **Occlusion mask:** `net.mask_width` is the resolution of the person mask sent to the renderer (0 turns it off).
 - **Prediction lead (optional, Mirror mode):** wave a hand and press [ / ] until the garment stops trailing or leading the reflection. Then add the shown lead to `camera.latency_s` (or `predict.display_latency_s`).
 
@@ -274,17 +318,19 @@ With a webcam, absolute distance is approximate (±10–20 %); fusion helps. The
 - **Gestures:** `gestures.py`. A swipe is one fast, mostly sideways stroke of the hand (wrist, index and pinky combined, so one blurred landmark doesn't break it), measured on the raw 2D image relative to the shoulders, so it's independent of distance and has no filter lag. It fires mid-stroke once the hand has covered 0.8 shoulder widths with a peak speed of 1.8 shoulder widths/s. Moving the hand back is not a swipe: a stroke the other way only counts once the hand has been still for 0.6 s, and within 3 s of a swipe only if it's at least 80 % as fast. `swipe_direction` is `natural` (scrolling: move the hand right to bring in the item on the left) or `pointer`. With `--log`, rejected strokes print a `[swipe?] … reject` line with the reason. On a synthetic benchmark of realistic swipes, returns, double swipes and non-swipe hand motion, 96 % of swipe cases and 98 % of non-swipe cases come out right (previous detector: 86 % / 94 %; its main failure was the way back firing as an opposite swipe). Fist = MediaPipe hand-landmark model on a crop around the raised wrist (`handpose.py`), with finger-curl ratios. A fist held still blocks swipes.
 - **Latency / pose prediction:** perception sends each frame's joints *with velocities* at the frame's capture time (`filters.PosePredictor`: One-Euro at rest, a constant-velocity Kalman filter once a joint moves). Every render frame, `FTrackingClient::Predict` extrapolates them to the moment that frame reaches the screen, so the garment sits on where the body is now, not where it was ~80 ms ago, and moves at the render rate rather than in 30 Hz steps. In *CameraFeed* mode the overlay is instead matched to the capture time of the image shown under it. Clocks are synced from each frame's send time. Measured end to end with a known trajectory and 60 ms latency: fast-motion error halves (110 → 55 mm), slow motion −20 %, rest jitter < 1 mm/frame. The rest of the pipeline was cut too: JSON goes out before the camera image, the fist classifier runs on its own thread, and pose and depth get separate OpenVINO thread budgets. Together these took capture→renderer from 141 ms to 19 ms on a 4-core test box (measured with the Unity renderer). Tuning lives in `predict`, `filters` and `camera.latency_s` in `calib/config.json`. Debug line (D) shows latency and prediction horizon.
 - **Occlusion (`BodyProxy.cpp`, `M_Proxy`):** stand-ins for the body hide whatever of the garment is behind it. Parts under the garment (torso, neck, sleeved arm) are fitted capsules. Exposed parts (bare forearms, hands with fingers, head with hair) are drawn oversized, then trimmed per pixel to the person mask that BlazePose's landmark model produces (sent with each frame, `net.mask_width`): each fragment is projected into the camera image and dropped where the mask says there is no person, so the cut-out follows the real silhouette. The lookup uses where that body part was when the mask was captured, so prediction doesn't tear it, and it works in both modes. Oversized parts are pushed back by their oversize so they can't poke through sleeves or the collar, and are kept off the garment's outline on screen, where the mask can't tell a hand from the torso behind it (a fitted core hides the cloth there). The occluders are one procedural mesh rebuilt each frame; each part's trim flag, depth push and motion since the mask go in its vertices' UV1–UV3. They draw as the camera-feed pixel they cover (CameraFeed mode) or black (Mirror), so they read as the real body, and they cast shadows, so hands, arms and the head shade the garment. B shows them (trimmed parts tinted warm). With the Unity renderer, on the test clip, they covered 99 % of the real hands, forearms and head (capsules alone: 87 %), and occluder pixels off the body dropped from 35 % to 7 %.
-- **Wire format:** TCP, with Python as the server. Each message is 1 type byte, a 4-byte big-endian length, then the payload: `J` = JSON tracking frame; `R` = float64 capture time + uint16 width + uint16 height + RGB24 camera image (rows bottom first); `M` = float64 capture time + uint16 width + uint16 height + the person mask (uint8, 255 = person). The renderer also accepts the older `I` (float64 capture time + JPEG), decoded on its network thread. The image goes raw because on one machine that's far cheaper than a JPEG encode plus a decode.
+- **Wire format:** TCP, with Python as the server. Each message is 1 type byte, a 4-byte big-endian length, then the payload: `J` = JSON tracking frame (when a depth camera is measuring the user's build it includes a `shape` object with `a`, `d`, `ga`, `gz` and `sh`, see *Body shape from depth* below); `R` = float64 capture time + uint16 width + uint16 height + RGB24 camera image (rows bottom first); `M` = float64 capture time + uint16 width + uint16 height + the person mask (uint8, 255 = person). The renderer also accepts the older `I` (float64 capture time + JPEG), decoded on its network thread. The image goes raw because on one machine that's far cheaper than a JPEG encode plus a decode.
 - **Coordinates:** all body, cloth and garment code works in "body coordinates": metres, x to the right as seen facing the screen, y up, z into the screen (perception's Mirror frame with z flipped; `BodyMath.h`). The `MirrorWorld` component maps them to Unreal space (cm, X forward, Y right, Z up) with a proper rotation and ×100, so geometry keeps its winding; in Mirror mode it also mirrors body z, which is the reflection.
 - **Renderer (`ReflectARMirror.cpp`, `MirrorLocalPlayer.cpp`):** two modes. *CameraFeed* places the view at the webcam pose with its intrinsics over the live camera feed, mirrored by flipping the view's x axis (Unreal sees a reflected view and reverses culling itself). *Mirror* renders the reflected `MirrorWorld` with a Kooima off-axis frustum from the tracked eye; this is the mode the two-way-mirror build will use. `UMirrorLocalPlayer::GetProjectionData` hands both to Unreal as a view matrix and a reversed-Z, infinite-far projection.
 - **Look:** physical units: a 3000 lux key light with soft shadows (6° light source angle) and contact shadows, a 700 lux fill, and the room's bounce light as an emissive term (`Ambient`), since there is no environment to light the cloth indirectly. The camera exposure is fixed (ISO 100, 1/60 s, f/4, EV100 ~10), with no tone curve, bloom, vignette, motion blur or film grain, so the camera feed passes through unchanged (the feed and occluder materials divide the exposure back out) and black stays black on the mirror. FXAA instead of TSR, because the cloth has no motion vectors and TSR would smear it. Lumen and reflections are off (`Config/DefaultEngine.ini`).
 - **Garments (upper body only):** 5 tops in `GarmentSpec.cpp`: heavyweight tee, crewneck sweatshirt, satin blouse, flannel overshirt, bomber jacket.
   - *Authored meshes* (`garments/*.fbx`, `GarmentAsset.cpp`, `GarmentFit.cpp`): each garment is an FBX sewn from pattern pieces and draped on a reference body by `garments/make_garments.py` (about 5 minutes per garment; an artist's FBX with the same conventions works too). `Content/Python/reflectar_garments.py` imports them into `/Game/ReflectAR/Garments` (missing ones automatically at editor start; run `reflectar_garments.import_all()` after regenerating). Vertex colours carry the sewing: R = pinned to the body (yoke, sleeve heads, back of the collar), G = elastic band, B = ribbed knit. At run time `FitGarmentAsset` reshapes the mesh from the reference body to the user: each torso section becomes the user's measured section (the front of it from the mould of their torso, see below) while every vertex keeps its distance off the body, sleeves scale along the arm lengths, and the two blend across the armhole. Free fabric is fitted to the body's front as cloth hung over it lies (it falls from a belly or chest and doesn't tuck back in underneath); ribbed hems grip the body itself. The cloth itself is free from the chest down and along the sleeves (it rests on the body and may not sag more than about a centimetre below its cut), and keeps close to its cut around the armholes and upper chest. The yoke takes the measured slope of the shoulders. If an FBX asset is missing, the garment falls back to the generated mesh below.
-  - *Body shape from depth* (`perception/bodyshape.py`): with the D415, perception measures the torso's half-width and half-depth at the same six heights from lines of depth samples (edges from depth jumps, depth from the curvature of the front surface) and sends them as `shape`; the renderer uses those instead of the mask silhouette. On top of the six ovals it sends a mould of the torso's front (`gz`: 16 heights x 5 positions across, how far the surface stands forward of the plane through the hip and shoulder joints, from depth samples placed in 3D so a belly is entered at its true height) and the shoulder tops (`sh`: how high the silhouette rises above the shoulder joints at four points between neck and shoulder). The renderer (`FBodyMould`, `FRestSkeleton::TorsoSection`) fits the garments to that surface and the cloth collides with it; the back is not seen and stays generic. `fake_server.py --build slender|average|heavy|belly|chest [--shoulders sloped|square] [--no-mould]` sends a synthetic body (`synthbody.py`) for testing without a camera, and `tools/bodyshape_selftest.py` checks the measurement itself against rendered depth images of those bodies.
-  - *Body shape* (`BodyRig.cpp`, `FBodyShape`): the torso is measured from the person mask at six heights between the hips and the shoulders. It walks the mask outward from the torso's centre line to the silhouette edge, then averages the ratio to the generic body over ~1.5 s into `FBodyRig::Profile`. A side is skipped while its arm touches the torso (that edge would be the arm), so it measures whenever an arm is away from the body, for example while swiping. Nothing is measured unless the user faces the camera (±25°). Wider also means deeper (60 % of the width change), for chest and belly. Garments rebuild in the background when a level changes by more than 8 % for 1.5 s.
-  - *Mesh* (`GarmentMesher.cpp`): each garment is generated per user as one seamless surface. A signed-distance field smoothly blends the torso, shoulders, sleeves and collar, so armpits and shoulders have no gaps. It is meshed with surface nets and cut open at the neck, hem and cuffs. The torso cross-section follows the measured body plus ease. Below the chest it hangs from whatever is widest above it (chest or belly) by `Fit` (tank 0.15, tee 0.75, hoodie 0.95), the way fabric falls instead of tucking into the waist. Ribbed hem bands (hoodie, bomber, puffer) pull back in to the hips, and gathered cuffs sit at the wrist with the sleeve bloused over them; both hold to the body in the cloth sim. Built on the thread pool.
-  - *UV layout*: the surface is laid out like sewn pattern pieces: front and back panels unrolled around the torso (side seams), a yoke over the shoulder tops, and each sleeve unrolled around the arm (seam underneath). Texture stretch on the tee, flannel and hoodie: median 1.0, 90th percentile ≤ 1.45, area scale within ±8 % for 90 % of the surface. Vertices are split along the seams only for drawing; the solver keeps the welded mesh, and normals come from it, so seams don't show in the shading.
-  - *Closures* (`GarmentTrims.cpp`): real geometry that rides on the cloth. A raised placket with sewn buttons (polo 2, flannel 8, denim with metal shanks), or a zipper with tape, teeth, slider and pull (bomber, puffer). It hangs off a chain of points found by ray down the centre front of the rest mesh; each point follows its triangle on the simulated cloth and carries a local frame, so the closure bends with the fabric.
+  - *Body shape from depth* (`perception/bodyshape.py`): with the D415, perception measures the user's torso and sends it in the `shape` object of each tracking frame, only when the user is in range and facing the camera (`shape.max_turn`). It has five fields. `a` and `d` are the torso's half-width and half-depth in metres at six heights between the hips and the shoulders (a height of -0.05 to 0.72 of the torso length): the edges come from jumps in depth, the half-depth from fitting an ellipse to the curvature of the front surface along a line of depth samples. `ga` and `gz` are the *mould*: a grid of 16 heights by 5 positions across (0 to 0.8 of the half-width, both sides averaged), where `gz` is how far the body's front surface stands forward of the plane through the hip and shoulder joints and `ga` is the half-width at each height. The samples are placed in 3D, so a belly is entered at its true height rather than as a deeper oval. `sh` is the shoulder tops: how high the silhouette rises above the shoulder joints at four points between the neck and each shoulder joint, which is the slope of the shoulders. A value of 0 means not measured yet. Everything is averaged over `shape.time_constant_s` (1.5 s).
+    The renderer (`FBodyShape::Apply` and `FBodyShape::ApplyMould` in `BodyRig.cpp`, which fill `FBodyRig::Profile` and `FBodyRig::Mould`, an `FBodyMould`) takes these instead of the mask silhouette. `FitGarmentAsset` (`GarmentFit.cpp`) fits the garment's front to the mould, `FRestSkeleton::TorsoSection` gives the user's section at any height, and the cloth in `ClothGarment.cpp` collides with the same surface. `fake_server.py --build` (see [Running without a camera](#running-without-a-camera)) sends the same message for synthetic bodies from `synthbody.py`, and `tools/bodyshape_selftest.py` checks the measurement against rendered depth images of those bodies.
+    Limits that are true today. The mould has only been tested on those synthetic bodies (the self-test and `fake_server.py`), not on a real D415 or a real person, because a RealSense on macOS needs `sudo` and that has not yet been done for this feature. Only the front and the silhouette width are seen: the back of the torso is not measured and stays generic, and the sides are inferred from the width at the silhouette edge and the elliptical fit to the front. The depth camera measures the surface it sees, which is the person in the clothes they are wearing, so a thick jacket gives a larger torso than the body under it.
+  - *Body shape from the mask* (`BodyRig.cpp`, `FBodyShape`), used when there is no depth measurement (a webcam): the torso is measured from the person mask at six heights between the hips and the shoulders. It walks the mask outward from the torso's centre line to the silhouette edge, then averages the ratio to the generic body over ~1.5 s into `FBodyRig::Profile`. A side is skipped while its arm touches the torso (that edge would be the arm), so it measures whenever an arm is away from the body, for example while swiping. Nothing is measured unless the user faces the camera (±25°). Wider also means deeper (60 % of the width change), for chest and belly. Garments rebuild in the background when a level changes by more than 8 % for 1.5 s.
+  - *Generated mesh* (`GarmentMesher.cpp`), used only when a garment's FBX asset is missing: the garment is generated per user as one seamless surface. A signed-distance field smoothly blends the torso, shoulders, sleeves and collar, so armpits and shoulders have no gaps. It is meshed with surface nets and cut open at the neck, hem and cuffs. The torso cross-section follows the measured body plus ease. Below the chest it hangs from whatever is widest above it (chest or belly) by `Fit` (a per-garment value in `GarmentSpec.cpp`; 1 for all five current garments), the way fabric falls instead of tucking into the waist. Ribbed hem bands pull back in to the hips, and gathered cuffs sit at the wrist with the sleeve bloused over them; both hold to the body in the cloth sim. Built on the thread pool.
+  - *UV layout*: the surface is laid out like sewn pattern pieces: front and back panels unrolled around the torso (side seams), a yoke over the shoulder tops, and each sleeve unrolled around the arm (seam underneath). Texture stretch, measured on an earlier set of generated garments (tee, flannel, hoodie): median 1.0, 90th percentile ≤ 1.45, area scale within ±8 % for 90 % of the surface. Vertices are split along the seams only for drawing; the solver keeps the welded mesh, and normals come from it, so seams don't show in the shading.
+  - *Closures* (`GarmentTrims.cpp`): real geometry that rides on the cloth. A raised placket with sewn buttons (the flannel overshirt), or a zipper with tape, teeth, slider and pull (the bomber jacket). It hangs off a chain of points found by ray down the centre front of the rest mesh; each point follows its triangle on the simulated cloth and carries a local frame, so the closure bends with the fabric.
   - *Physics* (`ClothGarment.cpp`): an XPBD cloth solver, with near-inextensible stretch, soft compression so the fabric buckles into wrinkles, and bending, gravity, inertia and damping. It collides with capsules fitted to the body. The cloth is tethered to a version of the mesh skinned to six tracked bones; the tether is ~0 at the collar and shoulders and grows toward the hem and cuffs. Fabric parameters (denim stiff, jersey soft, puffer thick) are per garment.
   - *Shading* (`M_Fabric`): Unreal's cloth shading model, with per-fabric base colour, a weave normal map and a mask (AO in the weave's valleys, smoothness per fibre: fleece 0.1, denim 0.2, nylon 0.5–0.6), all generated at startup (`FFabricMaps`, 512² with mips), and sheen (fuzz) per garment. Two-sided, lit by the outward normal on both sides, so shading doesn't depend on triangle winding. While a garment fades in or out it switches to a translucent copy of its material (`M_FabricFade`).
 
