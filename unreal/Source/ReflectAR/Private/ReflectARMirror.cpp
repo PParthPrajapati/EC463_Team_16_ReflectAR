@@ -244,6 +244,8 @@ UTexture2D* AReflectARMirror::Swatch(int32 I) const
 // ======================================================================== unattended checks
 // -ReflectARShots=<seconds> saves a screenshot (UI included) to Saved/Screenshots at that interval,
 // -ReflectARCycle=<seconds> steps through the garments, -ReflectARMirrorMode starts in Mirror mode,
+// -ReflectARNoStab starts with the skeleton's depth stabilisation off, -ReflectARNoMask with the
+// occluders not trimmed to the person mask, -ReflectARGarment=<n> on garment n,
 // -ReflectARProxy shows the body stand-ins.
 void AReflectARMirror::DevTick(double NowT)
 {
@@ -254,6 +256,11 @@ void AReflectARMirror::DevTick(double NowT)
 		FParse::Value(FCommandLine::Get(), TEXT("ReflectARCycle="), DevCycleEvery);
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARMirrorMode"))) Mode = EMirrorViewMode::Mirror;
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARProxy"))) bShowProxy = true;
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoStab"))) Rig.bStabilise = false;
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoMask"))) bTrimToMask = false;
+		int32 DevGarment = 0;
+		FParse::Value(FCommandLine::Get(), TEXT("ReflectARGarment="), DevGarment);
+		for (int32 i = 0; i < DevGarment; i++) Browse(+1);
 		DevNextShot = NowT + DevShotEvery; DevNextCycle = NowT + DevCycleEvery;
 	}
 	if (DevCycleEvery > 0.f && NowT >= DevNextCycle) { Browse(+1); DevNextCycle = NowT + DevCycleEvery; }
@@ -408,6 +415,7 @@ void AReflectARMirror::LogStats(float Dt)
 	if (NowT - StatT < 3.0) return;
 	int Rb = 0;
 	for (const FGarmentSlot& G : Garments) Rb += G.Sim->RebuildCount;
+	UE_LOG(LogTemp, Log, TEXT("[ReflectAR body] yaw %.1f deg, shoulders %.3f m, hips %.3f m, torso %.3f m, shoulder depths L %.3f R %.3f"), Rig.YawDeg, Rig.ShoulderW, Rig.HipW, Rig.TorsoLen, Rig.J[LM::LShoulder].Z, Rig.J[LM::RShoulder].Z);
 	UE_LOG(LogTemp, Log, TEXT("[ReflectAR stats] avg %.0f fps, worst frame %.0f ms, cloth max %.1f ms, rebuilds +%d (last %.0f ms), verts %d"),
 		StatN / FMath::Max(StatSum, 1e-3f), StatWorst * 1000.f, StatCloth, Rb - StatRebuilds, Cg.LastBuildMs, Cg.VertexCount());
 	StatT = NowT; StatWorst = StatSum = StatCloth = 0; StatN = 0; StatRebuilds = Rb;

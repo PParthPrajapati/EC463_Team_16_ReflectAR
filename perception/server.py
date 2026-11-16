@@ -282,6 +282,11 @@ def main():
     ap.add_argument("--snapshot", help="write an annotated debug frame here every second")
     ap.add_argument("--no-image", action="store_true", help="don't stream camera JPEGs")
     ap.add_argument("--video", help="replay a recorded video file instead of the webcam")
+    ap.add_argument("--recording", metavar="DIR", help="play a tools/record_spin.py recording (colour + depth) "
+                    "back as if it were the RealSense")
+    ap.add_argument("--no-shape", action="store_true", help="don't measure the body's build from depth (garments "
+                    "are then cut for an average build)")
+    ap.add_argument("--frames", metavar="A:B", help="with --recording: only these frame indices, looped")
     ap.add_argument("--calib-dist", type=float, help="stand exactly this many metres from the camera; "
                     "calibrates the distance estimate and exits")
     ap.add_argument("--log", action="store_true", help="print tracking state every second")
@@ -302,11 +307,16 @@ def main():
     warmup(hand_model.model, (1, HAND_SIZE, HAND_SIZE, 3))
     hands = HandWorker(hand_model)
     cc = cfg["camera"]
-    source = "webcam" if args.video else cc.get("source", "auto")
+    source = "recording" if args.recording else "webcam" if args.video else cc.get("source", "auto")
     if source == "auto":
         source = "realsense" if realsense.available() else "webcam"
-    sensor = source == "realsense"
-    if sensor:
+    sensor = source in ("realsense", "recording")
+    if source == "recording":
+        import recorded
+        cam = recorded.RecordedCamera(args.recording, args.frames)
+        depth = realsense.SensorDepth(cam)
+        print(f"[cam] {cam.desc}")
+    elif sensor:
         if args.calib_dist:
             raise SystemExit("--calib-dist is only for the webcam: the RealSense measures distance directly")
         rc = cc.get("realsense", {})
@@ -421,7 +431,7 @@ def main():
             P_c = np.stack([(uv[:, 0] - K.cx) * Z / K.fx, (uv[:, 1] - K.cy) * Z / K.fy, Z], axis=1)
             P_m, V_m = f_joints(to_mirror(P_c), stamp, vis)
             eye, eye_v = f_eye(to_mirror((P_c[L_EYE] + P_c[R_EYE]) / 2), stamp)
-            if sensor and rng_ok_for_shape(z_root, cfg["range_m"]):
+            if sensor and not args.no_shape and rng_ok_for_shape(z_root, cfg["range_m"]):
                 msg["shape"] = shape.update(stamp, lambda us, vs: depth.line(us, vs, W, H), uv, P_c, vis, K.fx, K.fy)
             dist = z_root
             z_skel_log, z_da_log, scale = z_skel, z_da, z_fused / max(z_skel, 1e-3)
