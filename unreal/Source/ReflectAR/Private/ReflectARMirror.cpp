@@ -207,6 +207,7 @@ void AReflectARMirror::HandleInput()
 		if (Pressed(EKeys::P)) { bPredict = !bPredict; Toast(bPredict ? TEXT("Prediction on") : TEXT("Prediction off")); }
 		if (Pressed(EKeys::O)) { bTrimToMask = !bTrimToMask; Toast(bTrimToMask ? TEXT("Occlusion: person mask") : TEXT("Occlusion: capsules only")); }
 		if (Pressed(EKeys::L)) SetLatencyTest(!bLatencyTest);
+		if (Pressed(EKeys::K)) { Rig.bStabilise = !Rig.bStabilise; Toast(Rig.bStabilise ? TEXT("Skeleton stabilisation on") : TEXT("Skeleton stabilisation off")); }
 		if (Pressed(EKeys::LeftBracket)) LeadMs -= 5.f;
 		if (Pressed(EKeys::RightBracket)) LeadMs += 5.f;
 		if (Pressed(EKeys::Escape)) UKismetSystemLibrary::QuitGame(this, PC, EQuitPreference::Quit, false);
@@ -466,6 +467,7 @@ void AReflectARMirror::Tick(float Dt)
 		const double Target = bMatchFeed ? Tracking->FeedCaptureTime : NowT + Tracking->DisplayLatency() + LeadMs * 0.001;
 		Tracking->Predict(Target, bPredict, bPredict && !bMatchFeed);
 		if (!bHadBody) Shape.Reset(Rig);                  // a new person: measure them from scratch
+		if (F->Cam.Valid()) Rig.CamPos = CamPosBody(F->Cam);     // depth is stabilised along the camera's lines of sight
 		Rig.Update(Tracking->Joints, Tracking->Visibility, Dt, !bHadBody || NowT - LastTracked > 0.5);
 		bHadBody = true;
 		LastTracked = NowT;
