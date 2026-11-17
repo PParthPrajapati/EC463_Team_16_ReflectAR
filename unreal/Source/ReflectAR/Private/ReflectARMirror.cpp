@@ -83,6 +83,10 @@ void AReflectARMirror::BeginPlay()
 	FParse::Value(FCommandLine::Get(), TEXT("ReflectARPort="), Port);
 	if (bMirrorOutput) Mode = EMirrorViewMode::Mirror;
 	Tracking = MakeUnique<FTrackingClient>(TEXT("127.0.0.1"), Port);
+	// start the mirror calibration from values found earlier and not yet in perception's config
+	{ float V = 0.f; if (FParse::Value(FCommandLine::Get(), TEXT("ReflectARTiltAdj="), V)) Tracking->TiltAdjust = V; }
+	{ float V = 0.f; if (FParse::Value(FCommandLine::Get(), TEXT("ReflectARXAdj="), V)) Tracking->XAdjust = V; }
+	FParse::Value(FCommandLine::Get(), TEXT("ReflectARScaleAdj="), ScaleAdjust);
 	Params = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/ReflectAR/MPC_ReflectAR.MPC_ReflectAR"));
 
 	MirrorWorld->SetRelativeTransform(FTransform(BodyBasis(), FVector::ZeroVector, FVector(100.0)));
@@ -216,12 +220,42 @@ void AReflectARMirror::HandleInput()
 	if (PC)
 	{
 		auto Pressed = [PC](const FKey& K) { return PC->WasInputKeyJustPressed(K); };
-		if (Pressed(EKeys::Right)) Browse(+1);
-		if (Pressed(EKeys::Left)) Browse(-1);
+		if (bMirrorOutput)
+		{
+			// Calibration at the mirror, by eye against the reflection. The arrows move the clothes: up /
+			// down by changing the camera's downward tilt (0.25 degrees a press), left / right by moving
+			// the camera sideways (5 mm a press). U / D make the picture larger / smaller about the chest
+			// (0.5 % a press). Shift: four times the step. The totals are logged, and go into
+			// perception/calib/config.json (camera_pose.tilt_down_deg, pos_m[0], screen.picture_scale).
+			// The garments change with , and . here (and with swipes).
+			const float Big = PC->IsInputKeyDown(EKeys::LeftShift) || PC->IsInputKeyDown(EKeys::RightShift) ? 4.f : 1.f;
+			const float dT = (Pressed(EKeys::Down) ? 0.25f : 0.f) - (Pressed(EKeys::Up) ? 0.25f : 0.f);
+			const float dX = (Pressed(EKeys::Right) ? 0.005f : 0.f) - (Pressed(EKeys::Left) ? 0.005f : 0.f);
+			const float dS = (Pressed(EKeys::U) ? 0.005f : 0.f) - (Pressed(EKeys::D) ? 0.005f : 0.f);
+			if (dT != 0.f || dX != 0.f || dS != 0.f)
+			{
+				const float Ta = Tracking->TiltAdjust.load(), Xa = Tracking->XAdjust.load();
+				Tracking->TiltAdjust = Ta + dT * Big;
+				Tracking->XAdjust = Xa + dX * Big;
+				ScaleAdjust *= 1.f + dS * Big;
+				const TSharedPtr<FTrackingFrame> Fr = Tracking->Latest;
+				const float Tilt0 = Fr.IsValid() ? Fr->Cam.tilt - Ta : 0.f, X0 = Fr.IsValid() ? Fr->Cam.PosMirror.X - Xa : 0.f, S0 = Fr.IsValid() ? Fr->Screen.Scale : 1.f;
+				CalibText = FString::Printf(TEXT("tilt_down_deg %.2f   pos x %.3f m   picture_scale %.3f"), Tilt0 + Ta + dT * Big, X0 + Xa + dX * Big, S0 * ScaleAdjust);
+				CalibTime = FTrackingClient::Now();
+				UE_LOG(LogTemp, Log, TEXT("[ReflectAR calib] %s"), *CalibText);
+			}
+			if (Pressed(EKeys::Period)) Browse(+1);
+			if (Pressed(EKeys::Comma)) Browse(-1);
+		}
+		else
+		{
+			if (Pressed(EKeys::Right)) Browse(+1);
+			if (Pressed(EKeys::Left)) Browse(-1);
+			if (Pressed(EKeys::D)) bShowDebug = !bShowDebug;
+		}
 		if (Pressed(EKeys::SpaceBar)) Select();
 		if (Pressed(EKeys::M) && !bMirrorOutput) Mode = Mode == EMirrorViewMode::CameraFeed ? EMirrorViewMode::Mirror : EMirrorViewMode::CameraFeed;
 		if (Pressed(EKeys::B)) bShowProxy = !bShowProxy;
-		if (Pressed(EKeys::D)) bShowDebug = !bShowDebug;
 		if (Pressed(EKeys::C)) bCubeTest = !bCubeTest;
 		if (Pressed(EKeys::P)) { bPredict = !bPredict; Toast(bPredict ? TEXT("Prediction on") : TEXT("Prediction off")); }
 		if (Pressed(EKeys::O)) { bTrimToMask = !bTrimToMask; Toast(bTrimToMask ? TEXT("Occlusion: person mask") : TEXT("Occlusion: capsules only")); }
@@ -561,6 +595,10 @@ void AReflectARMirror::Tick(float Dt)
 	if (bShow)
 	{
 		G.Sim->Alpha = Visible;
+		// Body coords follow the glass. A mirror leaning back stands the user at an angle in them, and
+		// cloth has to fall along the real vertical, not along the glass.
+		const float Lean = F.IsValid() ? FMath::DegreesToRadians(F->Screen.LeanBackDeg) : 0.f;
+		G.Sim->Fall = V3(0.f, -FMath::Cos(Lean), FMath::Sin(Lean));
 		G.Sim->Step(Dt, NowT);
 		if (G.Sim->HasMesh()) { UploadGarment(G); ApplyMaterials(G, Visible); }
 	}
@@ -685,8 +723,18 @@ void AReflectARMirror::UpdateCamera()
 		const V3 Va = Pa - Eye, Vb = Pb - Eye, Vc = Pc - Eye;
 		const float D = -Dot(Va, Vn);
 		if (D < 0.05f) return;                            // keep last frame's view
-		const float L = Dot(Vr, Va) * Near / D, R = Dot(Vr, Vb) * Near / D;
-		const float B = Dot(Vu, Va) * Near / D, T = Dot(Vu, Vc) * Near / D;
+		float L = Dot(Vr, Va) * Near / D, R = Dot(Vr, Vb) * Near / D;
+		float B = Dot(Vu, Va) * Near / D, T = Dot(Vu, Vc) * Near / D;
+		// calibrated picture size: larger or smaller about the chest (which stays where it is)
+		const float Zoom = Sc.Scale * ScaleAdjust;
+		if (Zoom != 1.f)
+		{
+			float Px = (L + R) * 0.5f, Py = (B + T) * 0.5f;
+			const V3 Ch = (Tracking->Joints[LM::LShoulder] + Tracking->Joints[LM::RShoulder] + Tracking->Joints[LM::LHip] + Tracking->Joints[LM::RHip]) * 0.25f - Eye;
+			const float Dc = -Dot(Ch, Vn);
+			if (bHadBody && Dc > 0.1f) { Px = Dot(Vr, Ch) * Near / Dc; Py = Dot(Vu, Ch) * Near / Dc; }
+			L = Px + (L - Px) / Zoom; R = Px + (R - Px) / Zoom; B = Py + (B - Py) / Zoom; T = Py + (T - Py) / Zoom;
+		}
 		V.EyeB = Eye; V.RightB = Vr; V.UpB = Vu; V.FwdB = -Vn;
 		V.P00 = 2.f * Near / (R - L); V.P20 = -(R + L) / (R - L);
 		V.P11 = 2.f * Near / (T - B); V.P21 = -(T + B) / (T - B);

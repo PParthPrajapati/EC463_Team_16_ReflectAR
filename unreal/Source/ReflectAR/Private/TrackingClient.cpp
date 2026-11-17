@@ -92,7 +92,7 @@ namespace ReflectAR
 		return D;
 	}
 
-	static void ParseFrame(const TSharedPtr<FJsonObject>& O, FTrackingFrame& F)
+	static void ParseFrame(const TSharedPtr<FJsonObject>& O, FTrackingFrame& F, float TiltAdjust, float XAdjust)
 	{
 		auto Num = [](const TSharedPtr<FJsonObject>& J, const TCHAR* K, double Def) { double V; return J->TryGetNumberField(K, V) ? V : Def; };
 		auto Floats = [](const TSharedPtr<FJsonObject>& J, const TCHAR* K, TArray<float>& Out)
@@ -126,10 +126,35 @@ namespace ReflectAR
 			Floats(*Sub, TEXT("pos"), Pos);
 			if (Pos.Num() == 3) C.PosMirror = V3(Pos[0], Pos[1], Pos[2]);
 		}
+		// the camera pitched TiltAdjust degrees further down than perception was told: turn everything
+		// it measured about the camera (Mirror frame: y up, z out of the glass), as perception would have
+		if (const float Adj = TiltAdjust; Adj != 0.f && F.Cam.Valid())
+		{
+			const float Th = FMath::DegreesToRadians(Adj), c = FMath::Cos(Th), s = FMath::Sin(Th);
+			auto Turn = [c, s](TArray<float>& A, const V3& About)
+			{
+				for (int i = 0; i + 2 < A.Num(); i += 3)
+				{
+					const float y = A[i + 1] - About.Y, z = A[i + 2] - About.Z;
+					A[i + 1] = c * y - s * z + About.Y; A[i + 2] = s * y + c * z + About.Z;
+				}
+			};
+			Turn(F.Joints, F.Cam.PosMirror); Turn(F.Eye, F.Cam.PosMirror);
+			Turn(F.Vel, V3::ZeroVector); Turn(F.EyeVel, V3::ZeroVector);
+			F.Cam.tilt += Adj;
+		}
+		if (XAdjust != 0.f && F.Cam.Valid())               // ... and the camera further to the right
+		{
+			for (int i = 0; i + 2 < F.Joints.Num(); i += 3) F.Joints[i] += XAdjust;
+			if (F.Eye.Num() == 3) F.Eye[0] += XAdjust;
+			F.Cam.PosMirror.X += XAdjust;
+		}
 		if (O->TryGetObjectField(TEXT("screen"), Sub))
 		{
 			F.bHasScreen = true;
 			F.Screen.WM = Num(*Sub, TEXT("w_m"), 0.302); F.Screen.HM = Num(*Sub, TEXT("h_m"), 0.196);
+			F.Screen.LeanBackDeg = Num(*Sub, TEXT("lean_back_deg"), 0.0);
+			F.Screen.Scale = Num(*Sub, TEXT("picture_scale"), 1.0);
 		}
 		if (O->TryGetObjectField(TEXT("predict"), Sub))
 		{
@@ -153,7 +178,7 @@ namespace ReflectAR
 			TSharedPtr<FJsonObject> O;
 			if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), O) || !O.IsValid()) return;
 			TSharedPtr<FTrackingFrame> F = MakeShared<FTrackingFrame>();
-			ParseFrame(O, *F);
+			ParseFrame(O, *F, TiltAdjust.load(), XAdjust.load());
 			F->Arrival = Arrival;
 			for (const FString& E : F->Events) Events.Enqueue(E);
 			FScopeLock L(&Gate);

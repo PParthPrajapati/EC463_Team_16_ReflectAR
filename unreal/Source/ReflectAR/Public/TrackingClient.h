@@ -20,7 +20,7 @@ namespace ReflectAR
 		bool Valid() const { return fx > 0 && w > 0 && h > 0; }
 	};
 
-	struct FScreenInfo { float WM = 0.302f, HM = 0.196f; };
+	struct FScreenInfo { float WM = 0.302f, HM = 0.196f, LeanBackDeg = 0.f, Scale = 1.f; };   // lean: the top of the glass further from the user
 
 	/** Prediction tuning, from the "predict" block of perception/calib/config.json. */
 	struct FPredictInfo { float DisplayLatency = 0.025f, HorizonTau = 0.35f, MaxHorizon = 0.25f, BlendTc = 0.015f; };
@@ -109,6 +109,12 @@ namespace ReflectAR
 		FRunnableThread* Thread = nullptr;
 		IImageWrapperModule* ImageWrapper = nullptr;
 		std::atomic<bool> bRunning{ true }, bConnected{ false };
+	public:
+		/** Calibration at the mirror: degrees added to the camera's downward tilt (camera_pose.tilt_down_deg). */
+		std::atomic<float> TiltAdjust{ 0.f };
+		/** ... and metres added to the camera's sideways position (camera_pose.pos_m[0]). */
+		std::atomic<float> XAdjust{ 0.f };
+	private:
 
 		FCriticalSection Gate;
 		TSharedPtr<FTrackingFrame> PendingFrame;

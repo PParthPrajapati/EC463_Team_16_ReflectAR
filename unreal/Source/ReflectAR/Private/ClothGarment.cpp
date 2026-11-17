@@ -343,7 +343,7 @@ namespace ReflectAR
 		// a garment put on for the first time drops into place: settle it a little before it is shown
 		const int Steps = bFresh ? Substeps * (bAuthored ? 3 : 10) : Substeps;   // an authored mesh starts out draped
 		const float h = bFresh ? 1.f / 480.f : Dt / Substeps, h2 = h * h;
-		const V3 G = V3(0.f, -9.81f, 0.f) * Spec.Density * h2;
+		const V3 G = Fall * 9.81f * Spec.Density * h2;
 		const float Keep = 1.f - Clamp01((bFresh ? 4.f : 1.f) * Spec.Damping * h * 60.f);
 		const float AS = Spec.Stretch / h2, AC = Spec.Compress / h2, AB = Spec.Bend / h2;
 		const int NC = Colliders.Num();

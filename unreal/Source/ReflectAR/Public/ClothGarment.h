@@ -30,6 +30,7 @@ namespace ReflectAR
 		float Alpha = 1.f;
 
 		float LastBuildMs = 0, LastStepMs = 0;
+		V3 Fall = V3(0.f, -1.f, 0.f);          // which way things fall, in body coords (not -y when the mirror leans)
 		int RebuildCount = 0;
 		int VertexCount() const { return X.Num(); }
 		bool HasMesh() const { return bHasMesh; }

@@ -32,6 +32,8 @@ void AReflectARHUD::DrawHUD()
 {
 	Super::DrawHUD();
 	const AReflectARMirror* Mo = AReflectARMirror::Get(GetWorld());
+	if (Mo && Canvas && ReflectAR::FTrackingClient::Now() - Mo->CalibTime < 4.0)
+		Canvas->DrawText(GEngine->GetLargeFont(), Mo->CalibText, 40.f, Canvas->SizeY - 120.f, 3.f, 3.f);
 	if (Mo && Mo->bMirrorOutput) return;              // the mirror shows the garments and nothing else
 	// the UI proper is a Slate widget over the viewport. Added on the first draw rather than in
 	// BeginPlay: by now the viewport's overlay exists, in a standalone game and in Play-In-Editor alike.

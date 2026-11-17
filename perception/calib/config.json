@@ -22,20 +22,25 @@
     "latency_s": 0.04
   },
   "screen": {
-    "_note": "Active display area of the 14in MacBook Pro (3024x1964 @ 254 ppi). Mirror-frame origin = lower-left corner.",
-    "w_m": 0.302,
-    "h_m": 0.196,
-    "res_x": 3024,
-    "res_y": 1964
+    "_note": "Lit picture area of the display behind the two-way glass: Dell U2722D (27in, 596.7 x 335.7 mm, 2560x1440) mounted portrait. Mirror-frame origin = lower-left corner. (The 14in MacBook Pro's own screen: 0.302 x 0.196 m, 3024x1964.)",
+    "w_m": 0.3357,
+    "h_m": 0.5967,
+    "res_x": 1440,
+    "res_y": 2560,
+    "_lean_note": "How far the glass leans back (top further from the user), degrees. Garments fall along the real vertical.",
+    "lean_back_deg": 6.0,
+    "_scale_note": "Size of the mirror output's picture, about the user's chest (1 = as computed).",
+    "picture_scale": 1.041
   },
   "camera_pose": {
-    "_note": "Camera optical centre in Mirror frame (metres) and downward pitch. Laptop camera sits ~8 mm above the active area, centred. With a RealSense, measure to its colour (RGB) lens, not the middle of the bar.",
+    "_note": "Camera optical centre in Mirror frame (metres: x right, y up, z out of the glass towards the user) and downward pitch relative to the glass. Measured on the mirror: 6 5/8 in right, 24 1/4 in up, 1/8 in out. With a RealSense, measure to its colour (RGB) lens, not the middle of the bar. (The MacBook's own camera: [0.151, 0.204, 0.0].)",
     "pos_m": [
-      0.151,
-      0.204,
-      0.0
+      0.138,
+      0.616,
+      0.003
     ],
-    "tilt_down_deg": 0.0
+    "_tilt_note": "Downward pitch relative to the glass (which leans back 6 degrees). Tilt, pos_m[0] and screen.picture_scale were set by eye against the reflection on 2026-11-17 with the mirror output's calibration keys (arrows, U / D); the tape measure gave x = 0.168.",
+    "tilt_down_deg": 7.75
   },
   "range_m": [
     1.0,

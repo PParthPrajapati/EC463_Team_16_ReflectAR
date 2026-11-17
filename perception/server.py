@@ -38,6 +38,7 @@ from geometry import Intrinsics, skeleton_distance, CameraToMirror
 from gestures import Gestures, SIDES
 from bodyshape import BodyShape
 import realsense
+import camtilt
 
 L_EYE, R_EYE = 2, 5
 TORSO = (11, 12, 23, 24)
@@ -306,6 +307,8 @@ def main():
     ap.add_argument("--calib-dist", type=float, help="stand exactly this many metres from the camera; "
                     "calibrates the distance estimate and exits")
     ap.add_argument("--log", action="store_true", help="print tracking state every second")
+    ap.add_argument("--measure-tilt", action="store_true", help="depth camera: print how far the camera is pitched "
+                    "down every 2 s, from the floor, ceiling and walls in view (camtilt.py)")
     ap.add_argument("--latency-log", metavar="CSV", help="latency test: write each frame's per-stage times "
                     "(exposure, arrival, pose done, joints ready, sent) to this CSV")
     ap.add_argument("--ep-log", action="store_true", help="ONNX Runtime info logging: shows how many nodes of "
@@ -375,7 +378,7 @@ def main():
     print(f"[cam] {W}x{H}  fx={K.fx:.0f} ({src})  depth calib: skel={cal['skel']} da={cal['da']} "
           f"from {[p['d'] for p in cal['points']]} m")
 
-    fps, pose_ms, t_log, t_snap, last_seen, last_dbg = 0.0, 0.0, 0.0, 0.0, 0.0, ""
+    fps, pose_ms, t_log, t_snap, t_tilt, last_seen, last_dbg = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""
     last_da = (None, -1e9)
     last_idle_run = 0.0
     while True:
@@ -510,6 +513,9 @@ def main():
                   f"proc={fps:.0f}fps depth={depth.hz:.0f}Hz "
                   f"{f'cam={cam.color_hz:.0f}fps ' if sensor else ''}"
                   f"net={'up' if net.connected else 'down'}")
+        if args.measure_tilt and sensor and stamp - t_tilt > 2.0 and cam.depth is not None:
+            t_tilt = stamp
+            print(camtilt.report(cam.depth, cam.depth_scale, K), flush=True)
         if args.snapshot and stamp - t_snap > 1.0:
             t_snap = stamp
             dbg = frame.copy()

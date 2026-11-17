@@ -96,6 +96,9 @@ public:
 	FString LatencyLine;
 	FString ToastText;
 	double ToastTime = -10;
+	float ScaleAdjust = 1.f;                       // mirror calibration: picture size on top of screen.picture_scale
+	FString CalibText;                             // the mirror calibration's current value, shown for a few seconds
+	double CalibTime = -10;
 	float RenderFps = 0;
 	const FMirrorView& View() const { return MirrorView; }
 	/** Body point (unreflected) -> screen pixels, or false if behind the camera. */
