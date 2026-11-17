@@ -13,7 +13,7 @@ rm -f "$ROOT"/unreal/Saved/Screenshots/shot_*.png
 (cd "$ROOT/perception" && .venv/bin/python -u server.py --log --recording "$REC" --frames "$FR" $SERVER_ARGS > "$LOG/replay_server.log" 2>&1 &)
 sleep 4
 ("$UE_ROOT/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor" "$ROOT/unreal/ReflectAR.uproject" -game -windowed \
-    -ResX=1280 -ResY=832 -nosplash -unattended "$@" > "$LOG/replay_renderer.log" 2>&1 &)
+    -ResX=${RES_X:-1280} -ResY=${RES_Y:-832} -nosplash -unattended "$@" > "$LOG/replay_renderer.log" 2>&1 &)
 for i in $(seq 1 100); do
     sleep 3
     [ "$(find "$ROOT/unreal/Saved/Screenshots" -name 'shot_*.png' 2>/dev/null | wc -l)" -ge "$N" ] && break

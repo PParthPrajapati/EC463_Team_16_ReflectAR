@@ -258,6 +258,32 @@ namespace ReflectAR
 		if (bImg && OffsetCount > 0 && IW > 0)
 		{
 			Upload(FeedTex, Img, IW, IH, true);
+			{
+				// every 6th pixel: luminance histogram, then the mean colour of the brightest 15 %
+				static float Lin[256];
+				if (Lin[255] == 0.f) for (int i = 0; i < 256; i++) { const float s = i / 255.f; Lin[i] = s <= 0.04045f ? s / 12.92f : FMath::Pow((s + 0.055f) / 1.055f, 2.4f); }
+				int32 Hist[64] = {}, Count = 0;
+				auto Lum = [](const uint8* p) { return 0.0722f * Lin[p[0]] + 0.7152f * Lin[p[1]] + 0.2126f * Lin[p[2]]; };   // BGRA
+				for (int y = 3; y < IH; y += 6)
+					for (int x = 3; x < IW; x += 6)
+					{
+						const uint8* p = &Img[(int64(y) * IW + x) * 4];
+						if (p[0] >= 250 || p[1] >= 250 || p[2] >= 250) continue;       // clipped: a lamp, a window
+						Hist[FMath::Min(int32(FMath::Sqrt(Lum(p)) * 64.f), 63)]++; Count++;
+					}
+				int32 Bin = 63;
+				for (int32 Above = 0; Bin > 0 && Above + Hist[Bin] < Count * 0.15f; Bin--) Above += Hist[Bin];
+				const float Cut = FMath::Square(Bin / 64.f);
+				double Sum[3] = {}; int32 N = 0;
+				for (int y = 3; y < IH; y += 6)
+					for (int x = 3; x < IW; x += 6)
+					{
+						const uint8* p = &Img[(int64(y) * IW + x) * 4];
+						if (p[0] >= 250 || p[1] >= 250 || p[2] >= 250 || Lum(p) < Cut) continue;
+						Sum[0] += Lin[p[2]]; Sum[1] += Lin[p[1]]; Sum[2] += Lin[p[0]]; N++;
+					}
+				if (N > 50) FeedWhite = FLinearColor(float(Sum[0] / N), float(Sum[1] / N), float(Sum[2] / N), 1.f);
+			}
 			FeedCaptureTime = IT + ClockOffset;
 		}
 		if (bMsk && OffsetCount > 0 && MW > 0)

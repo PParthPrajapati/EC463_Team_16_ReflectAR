@@ -72,6 +72,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float FillLux = 700.f;
 	/** Ambient light on the fabric (luminance of a white surface, cd/m2): the room's bounce light. */
 	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float Ambient = 120.f;
+	/** CameraFeed: light the garments like the room in the camera image (its brightness and colour cast), not at a fixed studio level. */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") bool bMatchRoomLight = true;
+	FLinearColor RoomLight = FLinearColor(1.f, 1.f, 1.f, 1.f);      // what the lights are multiplied by, eased
 
 	// ---- state the HUD draws
 	ReflectAR::FTrackingClient* Client() const { return Tracking.Get(); }

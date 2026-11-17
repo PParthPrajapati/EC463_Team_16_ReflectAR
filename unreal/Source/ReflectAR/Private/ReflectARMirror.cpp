@@ -521,6 +521,23 @@ void AReflectARMirror::Tick(float Dt)
 	// across one shoulder of the garment, which reads as a piece missing beside the neck
 	const float Zs = bMirror ? 1.f : -1.f;
 	KeyLight->SetWorldRotation(BodyDirToUE(V3(0.2f, -0.5f, Zs)).Rotation());
+	// The garments stand in the user's room, so they are lit like it: as bright as the camera image's
+	// white surfaces (a white garment at the fixed light levels renders at 0.92; clothes on a person
+	// are a little darker than the walls around them) and with half of their colour cast.
+	FLinearColor Want(1.f, 1.f, 1.f, 1.f);
+	const FLinearColor Fw = Tracking->FeedWhite;
+	if (bMatchRoomLight && !bMirror && Fw.A > 0.f)
+	{
+		const float Lum = FMath::Max(0.2126f * Fw.R + 0.7152f * Fw.G + 0.0722f * Fw.B, 1e-3f);
+		const float Gain = FMath::Clamp(0.75f * Lum / 0.92f, 0.2f, 1.2f);
+		Want = FLinearColor(Gain * FMath::Lerp(1.f, Fw.R / Lum, 0.5f), Gain * FMath::Lerp(1.f, Fw.G / Lum, 0.5f), Gain * FMath::Lerp(1.f, Fw.B / Lum, 0.5f), 1.f);
+	}
+	RoomLight = FMath::Lerp(RoomLight, Want, 1.f - FMath::Exp(-Dt / 1.f));
+	const float RoomMax = FMath::Max3(RoomLight.R, RoomLight.G, RoomLight.B);
+	const FLinearColor RoomTint(RoomLight.R / RoomMax, RoomLight.G / RoomMax, RoomLight.B / RoomMax);
+	for (UDirectionalLightComponent* L : { KeyLight, FillLight }) L->SetLightColor(RoomTint, false);
+	KeyLight->SetIntensity(KeyLux * RoomMax);
+	FillLight->SetIntensity(FillLux * RoomMax);
 	FillLight->SetWorldRotation(BodyDirToUE(V3(-0.7f, -0.2f, Zs)).Rotation());
 
 	// ---- garments: background builds for all, so swiping never waits; simulate the one worn
@@ -710,5 +727,5 @@ void AReflectARMirror::SetParams(bool bMaskOn)
 	const bool bFeedOn = Mode == EMirrorViewMode::CameraFeed && F.IsValid() && F->Cam.Valid() && Tracking->Feed();
 	const float FeedOn = bFeedOn ? (F->Range == TEXT("ok") || !F->bTracked ? 1.f : 0.6f) : 0.f;
 	P->SetVectorParameterValue(TEXT("Flags"), FLinearColor(FeedOn, 0.5f, float(Proxy.Cover.Num()), bShowProxy ? 1.f : 0.f));
-	P->SetVectorParameterValue(TEXT("Ambient"), FLinearColor(Ambient, Ambient, Ambient * 1.04f, 0.f));
+	P->SetVectorParameterValue(TEXT("Ambient"), FLinearColor(Ambient * RoomLight.R, Ambient * RoomLight.G, Ambient * 1.04f * RoomLight.B, 0.f));
 }

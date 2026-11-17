@@ -78,6 +78,9 @@ namespace ReflectAR
 		double FeedCaptureTime = -1e9, MaskCaptureTime = -1e9;
 		/** Camera image (sRGB BGRA, row 0 = image top) and person mask (G8, row 0 = top). */
 		UTexture2D* Feed() const { return FeedTex.Get(); }
+		/** The room's light as the camera sees it: the linear colour of the image's bright, unclipped
+		 * surfaces (its 85th to 100th percentile of luminance): about what something white looks like there. */
+		FLinearColor FeedWhite = FLinearColor(0.f, 0.f, 0.f, 0.f);
 		UTexture2D* Mask() const { return MaskTex.Get(); }
 		/** The same mask on the CPU, for measuring the body's silhouette. */
 		TArray<uint8> MaskBytes;
