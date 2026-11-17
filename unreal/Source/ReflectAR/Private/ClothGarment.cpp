@@ -85,8 +85,9 @@ namespace ReflectAR
 			if (D->Rest.Num() > MaxVerts)
 				D = GarmentMesher::Build(Skel, S, Cell * FMath::Sqrt(D->Rest.Num() / (MaxVerts * 0.9f)));
 		}
-		// an authored mesh is already draped: its folds are in its shape, it needs no extra fabric
-		const float Slack = Asset.IsValid() ? 0.f : S.Slack;
+		// an authored mesh comes draped on a mannequin, but smoothly: without a little extra fabric it
+		// fits the user like a moulded shell, with no folds at the elbows or down the body
+		const float Slack = Asset.IsValid() ? FMath::Max(S.Slack, 0.03f) : S.Slack;
 		TSharedPtr<FBuilt> R = MakeShared<FBuilt>();
 		R->Skel = Skel; R->Data = D; R->bAuthored = Asset.IsValid();
 		const int N = D->Rest.Num();

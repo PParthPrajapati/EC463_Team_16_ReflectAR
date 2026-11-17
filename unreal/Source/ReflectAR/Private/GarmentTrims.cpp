@@ -241,7 +241,9 @@ namespace ReflectAR
 			const float f = V.F;
 			const V3 R = LerpU(Cr[i], Cr[j], f), U = LerpU(Cu[i], Cu[j], f), Nn = LerpU(Cn[i], Cn[j], f);
 			FMeshSection& S = Sections[V.Section];
-			S.Pos[V.Index] = LerpU(Cp[i], Cp[j], f) + R * V.Local.X + U * V.Local.Y + Nn * V.Local.Z;
+			// (a little off the cloth: the chain runs straight between its points, and on a curved front,
+			// a belly or a chest, a zipper lying in the cloth's own surface sinks under it between them)
+			S.Pos[V.Index] = LerpU(Cp[i], Cp[j], f) + R * V.Local.X + U * V.Local.Y + Nn * (V.Local.Z + 0.003f);
 			S.Nrm[V.Index] = Normalized(R * V.LocalN.X + U * V.LocalN.Y + Nn * V.LocalN.Z);
 			S.Tan[V.Index] = V4(R.X, R.Y, R.Z, 1.f);
 		}

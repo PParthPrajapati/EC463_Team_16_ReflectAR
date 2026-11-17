@@ -175,7 +175,7 @@ void AReflectARMirror::CreateGarments()
 			Set[0]->SetScalarParameterValue(TEXT("Cloth"), Sp.Cloth);
 			Set[0]->SetTextureParameterValue(TEXT("FoldMap"), FFabricMaps::Fold());
 			Set[0]->SetScalarParameterValue(TEXT("FoldTile"), 1.f / FoldTileM);
-			Set[0]->SetScalarParameterValue(TEXT("Fold"), Sp.Fold);
+			Set[0]->SetScalarParameterValue(TEXT("Fold"), Sp.Fold * FoldGain);
 			for (int k = 1; k < 3; k++)
 			{
 				Set[k] = UMaterialInstanceDynamic::Create(f == 0 ? Trim : TrimFade, this);

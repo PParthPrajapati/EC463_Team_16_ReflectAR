@@ -98,7 +98,15 @@ namespace ReflectAR
 		// kept inside the body the garments are cut on: a yoke lies only a few millimetres off the
 		// shoulders, so the stand-in stops below them and is slimmer than the cloth's own colliders
 		Place(Parts[Torso], B.HipC, B.ShC - B.Up * 0.1f * u, B.ShoulderW * 0.4f * Pw, 0.085f * u * Pd, B.Fwd);
-		Place(Parts[Neck], B.ShC, B.HeadC - B.Up * 0.05f * u, 0.045f * u, 0.045f * u, B.Fwd);
+		// The neck only has to hide the back of the collar behind it. Started at the shoulder joints it
+		// reached down the chest in front of the collar (the head is well forward of the shoulders, so
+		// it leans forward) and showed the user's own neckline in a bib over the garment's. It starts
+		// just under the collar's rim instead: the yoke lies on the shoulders' tops beside the neck.
+		const float Rim = B.Mould.bShoulders ? B.Mould.Sh[0] : 0.083f * u;
+		// (an open neckline shows the chest inside it, which nothing else stands in for: there it
+		// still starts at the shoulder joints)
+		const bool bOpenNeck = Garment && Garment->Spec.Neck == ENeckline::VNeck;
+		Place(Parts[Neck], B.ShC + B.Up * (bOpenNeck ? 0.f : FMath::Max(Rim - 0.035f * u, 0.03f * u)), B.HeadC - B.Up * 0.05f * u, 0.045f * u, 0.045f * u, B.Fwd);
 		// The shoulder slopes (trapezius) between the neck and each shoulder joint. Without them the
 		// inside of the garment's back shows through the collar beside the neck, where the body is.
 		// They lie just under the yoke: under the shoulders' measured tops when the depth camera has
