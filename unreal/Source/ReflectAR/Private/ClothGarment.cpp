@@ -261,7 +261,10 @@ namespace ReflectAR
 		Colliders.Emplace(J[LM::RShoulder], J[LM::RElbow], 0.043f * u);
 		Colliders.Emplace(J[LM::LElbow], J[LM::LWrist], 0.036f * u);
 		Colliders.Emplace(J[LM::RElbow], J[LM::RWrist], 0.036f * u);
-		Colliders.Emplace(Body.ShC + Body.Up * 0.05f * u, Body.HeadC - Body.Up * 0.04f * u, 0.05f * u);   // neck, clear of the yoke
+		// neck, clear of the yoke. Straight up from the middle of the shoulders, where a collar is cut
+		// to sit, for the height of a collar: led to the head, which is forward of the shoulders and
+		// seldom centred, it pressed into one side of the collar and crumpled the band there.
+		Colliders.Emplace(Body.ShC + Body.Up * 0.05f * u, Body.ShC + Body.Up * 0.19f * u, 0.05f * u);
 	}
 
 	void FClothGarment::Outline(TArray<FCapsuleB>& Into) const

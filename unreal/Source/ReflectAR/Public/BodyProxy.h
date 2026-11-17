@@ -59,7 +59,8 @@ namespace ReflectAR
 			Exposed = 10,                          // 2 per arm: bare segments
 			Hands = 14, Thumbs = 16, Head = 18, Count = 19,
 			Cores = Count, Traps = Count + Count - Exposed,   // fitted copies of Exposed..Head, then the two shoulder slopes
-			Total = Traps + 2,
+			NeckShell = Traps + 2,                                     // the neck as wide as a collar's opening, trimmed to the person mask
+			Total = NeckShell + 1,
 		};
 		static int Core(int i) { return Cores + i - Exposed; }
 

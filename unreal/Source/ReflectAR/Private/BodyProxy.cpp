@@ -106,7 +106,13 @@ namespace ReflectAR
 		// (an open neckline shows the chest inside it, which nothing else stands in for: there it
 		// still starts at the shoulder joints)
 		const bool bOpenNeck = Garment && Garment->Spec.Neck == ENeckline::VNeck;
-		Place(Parts[Neck], B.ShC + B.Up * (bOpenNeck ? 0.f : FMath::Max(Rim - 0.035f * u, 0.03f * u)), B.HeadC - B.Up * 0.05f * u, 0.045f * u, 0.045f * u, B.Fwd);
+		const V3 NeckA = B.ShC + B.Up * (bOpenNeck ? 0.f : FMath::Max(Rim - 0.035f * u, 0.03f * u)), NeckB = B.HeadC - B.Up * 0.05f * u;
+		Place(Parts[Neck], NeckA, NeckB, 0.045f * u, 0.045f * u, B.Fwd);
+		// A neck is wider than that stand-in and rarely straight above the shoulders' centre, and a
+		// collar's opening is wider still: beside the stand-in the inside of the collar's back showed
+		// as a dark, ragged shape against the neck. With a person mask a wider shell is drawn over
+		// it, trimmed to the mask, so the user's own neck fills the collar as far as it really reaches.
+		if (bMasked) Place(Parts[NeckShell], NeckA, NeckB, 0.064f * u, 0.05f * u, B.Fwd); else Parts[NeckShell].Scale = V3::ZeroVector;
 		// The shoulder slopes (trapezius) between the neck and each shoulder joint. Without them the
 		// inside of the garment's back shows through the collar beside the neck, where the body is.
 		// They lie just under the yoke: under the shoulders' measured tops when the depth camera has
@@ -191,6 +197,12 @@ namespace ReflectAR
 		Props(Head, bMasked, Mhd, Offset(MaskJoints, J, LM::LEar, LM::REar));
 		for (int i = 0; i < Exposed; i++) Props(i, false, 0.f, V3::ZeroVector);
 		for (int i = Cores; i < Total; i++) Props(i, false, 0.f, V3::ZeroVector);
+		// Both neck parts are drawn 2 cm further from the viewer than they are: the neck leans with the
+		// head, so on one side it cut through the collar that lies against it and left a notch in its
+		// rim. Set back, the collar's near side wins; the back of the collar, a neck's depth behind,
+		// stays hidden.
+		Props(Neck, false, 0.02f * u, V3::ZeroVector);
+		Props(NeckShell, bMasked, 0.025f * u, Offset(MaskJoints, J, LM::LShoulder, LM::RShoulder));
 		if (Cover.Num() > MaxCover) Cover.SetNum(MaxCover);
 		for (int i = 0; DevHide && i < Total; i++) if (DevHide & (1u << i)) Parts[i].Scale = V3::ZeroVector;
 		Emit();

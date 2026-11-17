@@ -118,7 +118,11 @@ void AReflectARMirror::BeginPlay()
 	ProxyMat = UMaterialInstanceDynamic::Create(LoadMat(TEXT("M_Proxy")), this);
 	FeedMat = UMaterialInstanceDynamic::Create(LoadMat(TEXT("M_Feed")), this);
 	ProxyMesh->SetMaterial(0, ProxyMat);
-	ProxyMesh->SetCastShadow(true);                 // hands, arms and head shadow the garment
+	// The stand-ins for the body cast no shadows on the garment. The head's fell across one shoulder
+	// beside the neck and read as a dark hole in the collar, and an arm's as a blot on the belly:
+	// where the room's light really comes from isn't known, and a wrong shadow is worse than none.
+	// (The garment still shadows itself: a sleeve on the body, the collar on the yoke.)
+	ProxyMesh->SetCastShadow(false);
 	FeedQuad->SetMaterial(0, FeedMat);
 	FeedQuad->SetCastShadow(false);
 	if (UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
@@ -266,6 +270,8 @@ void AReflectARMirror::DevTick(double NowT)
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARMirrorMode"))) Mode = EMirrorViewMode::Mirror;
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARProxy"))) bShowProxy = true;
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoStab"))) Rig.bStabilise = false;
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoShadow"))) KeyLight->SetCastShadows(false);
+		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARProxyShadow"))) ProxyMesh->SetCastShadow(true);
 		{ int32 Hide = 0; if (FParse::Value(FCommandLine::Get(), TEXT("ReflectARHide="), Hide)) Proxy.DevHide = uint32(Hide); }   // bit i hides occluder part i
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoMask"))) bTrimToMask = false;
 		DevNextShot = NowT + DevShotEvery; DevNextCycle = NowT + DevCycleEvery;
