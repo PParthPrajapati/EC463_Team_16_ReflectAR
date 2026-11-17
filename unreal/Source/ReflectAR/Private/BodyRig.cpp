@@ -187,8 +187,8 @@ namespace ReflectAR
 		{
 			float a, d;
 			FRestSkeleton::BodyModel(Levels[k], B.HipW, B.ShoulderW, U, a, d);
-			Ra[k] = A[k] > 0.f ? FMath::Clamp(A[k] / a, 0.7f, 1.8f) : 0.f;
-			Rd[k] = D.Num() == 6 && D[k] > 0.f ? FMath::Clamp(D[k] / d, 0.65f, 2.2f) : 0.f;
+			Ra[k] = A[k] > 0.f ? FMath::Clamp((A[k] - ClothingAllowance) / a, 0.7f, 1.8f) : 0.f;
+			Rd[k] = D.Num() == 6 && D[k] > 0.f ? FMath::Clamp((D[k] - ClothingAllowance) / d, 0.65f, 2.2f) : 0.f;
 			Na += Ra[k] > 0.f;
 		}
 		if (Na == 0) return false;
@@ -253,7 +253,7 @@ namespace ReflectAR
 		int Have = 0;
 		for (int r = 0; r < R; r++)
 		{
-			for (int c = 0; c < C; c++) G[r][c] = GZ[r * C + c];
+			for (int c = 0; c < C; c++) G[r][c] = GZ[r * C + c] > 0.f ? FMath::Max(GZ[r * C + c] - ClothingAllowance, 1e-3f) : GZ[r * C + c];
 			Have += G[r][0] > 0.f;
 		}
 		if (Have < R * 3 / 4) return;                         // not enough of it yet: the ovals do until then

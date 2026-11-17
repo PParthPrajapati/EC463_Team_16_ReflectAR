@@ -122,6 +122,9 @@ namespace ReflectAR
 		static constexpr float Levels[6] = { -0.05f, 0.12f, 0.28f, 0.44f, 0.58f, 0.72f };
 		float TimeConstant = 1.5f;
 		float MaxYawDeg = 25.f;
+		/** The depth camera measures the user in their clothes: this much (m, off every side) is taken
+		 * to be clothing, not body, or every garment is cut for the loose shirt they came in. */
+		float ClothingAllowance = 0.015f;
 		int Samples = 0;
 
 		void Reset(FBodyRig& B);

@@ -51,6 +51,7 @@ namespace ReflectAR
 		float Fit = 0.7f;                 // below the chest: 0 = follows the waist, 1 = hangs straight
 		float HemBand = 0.f;              // ribbed hem band pulled in to the hips (0..1)
 		bool bCuffBand = false;           // gathered cuffs at the wrist (long sleeves)
+		float AssetEase = 0.6f;           // share of an authored mesh's room off the body that is kept (1 = as authored, relaxed)
 		float Slack = 0.02f;              // extra fabric between where the garment is held: what bunches into folds
 
 		// ---- ribbed knit bands, drawn as a second layer on the cloth (widths in m, 0 = none)

@@ -146,7 +146,7 @@ namespace ReflectAR
 		}
 	}
 
-	TSharedPtr<FGarmentMeshData> FitGarmentAsset(const FGarmentAsset& A, const FRestSkeleton& S)
+	TSharedPtr<FGarmentMeshData> FitGarmentAsset(const FGarmentAsset& A, const FRestSkeleton& S, float Ease)
 	{
 		TSharedPtr<FGarmentMeshData> Out = MakeShared<FGarmentMeshData>();
 		FGarmentMeshData& D = *Out;
@@ -203,7 +203,10 @@ namespace ReflectAR
 			if (q > 0.35f)
 			{
 				const V2 e(p.X / q, p.Z / q);                     // where the ray from the axis leaves the reference body
-				const V3 Off(e.X * kA + (p.X - e.X) * u, 0.f, c + e.Y * kD + (p.Z - e.Y) * u);
+				// (Ease: how much of the room the garment was authored with is kept. All of it over the
+				// shoulders: a yoke cut closer than the clothes the user came in leaves those showing.)
+				const float Ez = FMath::Lerp(Ease, 1.f, Ramp(0.66f, 0.88f, t));
+				const V3 Off(e.X * kA + (p.X - e.X) * u * Ez, 0.f, c + e.Y * kD + (p.Z - e.Y) * u * Ez);
 				Body = LerpV(Body, Off, Ramp(0.35f, 0.8f, q));
 			}
 			Body.Y = t <= 1.f ? p.Y * kY : S.L + (p.Y - Ref.L) * u;
@@ -215,7 +218,12 @@ namespace ReflectAR
 			const float Up0 = Side < 0 ? Ref.upperL : Ref.upperR, Up1 = Side < 0 ? S.upperL : S.upperR;
 			const float Fo0 = Side < 0 ? Ref.foreL : Ref.foreR, Fo1 = Side < 0 ? S.foreL : S.foreR;
 			const float Along1 = Along <= 0.f ? Along * u : Along <= Up0 ? Along * Up1 / Up0 : Up1 + (Along - Up0) * Fo1 / Fo0;
-			const V3 Sleeve = (Side < 0 ? S.lSh : S.rSh) + Dir * Along1 + (Rel - Dir * Along) * kArm;
+			// around the arm likewise: the room beyond the arm itself (4.5 cm on the reference body)
+			const V3 Around = Rel - Dir * Along;
+			const float Ar = Around.Size(), ArmR = 0.045f;
+			const float Ea = FMath::Lerp(1.f, Ease, Ramp(0.04f, 0.16f, Along));       // (the sleeve head keeps its room, like the yoke)
+			const float Ar1 = Ar > ArmR ? ArmR + (Ar - ArmR) * Ea : Ar;
+			const V3 Sleeve = (Side < 0 ? S.lSh : S.rSh) + Dir * Along1 + Around * (kArm * Ar1 / FMath::Max(Ar, 1e-5f));
 
 			D.Rest[i] = LerpV(Body, Sleeve, Arm[i]);
 

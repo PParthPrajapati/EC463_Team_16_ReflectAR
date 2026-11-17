@@ -78,7 +78,7 @@ namespace ReflectAR
 		// detail relative to the body, capped: solver cost grows with the vertex count
 		const float Cell = GarmentMesher::DefaultCell * FMath::Max(Skel.u, 0.8f);
 		TSharedPtr<FGarmentMeshData> D;
-		if (Asset.IsValid()) D = FitGarmentAsset(*Asset, Skel);
+		if (Asset.IsValid()) D = FitGarmentAsset(*Asset, Skel, S.AssetEase);
 		else
 		{
 			D = GarmentMesher::Build(Skel, S, Cell);
@@ -124,7 +124,10 @@ namespace ReflectAR
 		// is, so it can't lie smooth and gathers into folds between the yoke, the bands and the body.
 		auto Free = [&D](int a, int b)
 		{
-			return Ramp(0.05f, 0.3f, FMath::Min(D->Looseness[a], D->Looseness[b])) * (1.f - FMath::Max(D->Band[a], D->Band[b]));
+			// (sleeves stack into folds along the arm; the same extra on the body only reads as bagginess)
+			float ArmW = 0.f;
+			for (int k = 0; k < 4; k++) { if (D->Weights[a].Bone[k] >= 2) ArmW += 0.5f * D->Weights[a].W[k]; if (D->Weights[b].Bone[k] >= 2) ArmW += 0.5f * D->Weights[b].W[k]; }
+			return Ramp(0.05f, 0.3f, FMath::Min(D->Looseness[a], D->Looseness[b])) * (1.f - FMath::Max(D->Band[a], D->Band[b])) * FMath::Lerp(0.4f, 1.f, Clamp01(ArmW));
 		};
 		for (int i = 0; i < R->EA.Num(); i++)
 			R->ERest[i] = V3::Distance(D->Rest[R->EA[i]], D->Rest[R->EB[i]]) * (1.f + Slack * Free(R->EA[i], R->EB[i]));

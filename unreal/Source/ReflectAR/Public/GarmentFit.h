@@ -24,5 +24,5 @@ namespace ReflectAR
 	 * looseness (from the mesh's pin weights), elastic bands, UVs and the ribbed bands.
 	 * Thread-safe.
 	 */
-	TSharedPtr<FGarmentMeshData> FitGarmentAsset(const FGarmentAsset& A, const FRestSkeleton& S);
+	TSharedPtr<FGarmentMeshData> FitGarmentAsset(const FGarmentAsset& A, const FRestSkeleton& S, float Ease = 1.f);
 }
