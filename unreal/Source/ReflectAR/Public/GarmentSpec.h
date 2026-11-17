@@ -60,6 +60,9 @@ namespace ReflectAR
 		// ---- material and trims
 		float Smooth = 0.22f;             // perceptual smoothness of the fibres (roughness = 1 - this)
 		float Bump = 1.f;                 // weave normal-map strength
+		float Fold = 1.f;                 // soft drape folds and creases in the shading (stiff fabrics: less)
+		float Heather = 0.1f;             // fibre-to-fibre colour variation (heather grey: high)
+		float Cloth = 1.f;                // 1 = matte fibre response (cotton, wool), lower = smoother shell fabrics (nylon, satin)
 		FLinearColor Trim = FLinearColor(0.92f, 0.9f, 0.85f);    // buttons, or the zipper tape
 		FLinearColor Metal = FLinearColor(0.74f, 0.74f, 0.76f);  // zipper teeth / slider, metal buttons
 		bool bMetalButtons = false;
@@ -71,6 +74,24 @@ namespace ReflectAR
 	/** Colour and weave height (0..1) at (u, v) in [0, 1) of one repeat of the pattern. */
 	void SamplePattern(const FGarmentSpec& S, float u, float v, FLinearColor& OutColor, float& OutHeight);
 
+	/** Noise in [0, 1] that repeats every Period cells in x and y (smooth value noise). */
+	float TileNoise(float x, float y, int Period, int Seed = 0);
+
+	/**
+	 * Pixels of the material maps for one repeat of a fabric, N x N, row-major: base colour (linear
+	 * values, stored as sRGB), tangent-space normal from the weave height, and a mask (G = ambient
+	 * occlusion in the weave's valleys, A = smoothness).
+	 */
+	void BuildFabricPixels(const FGarmentSpec& S, int N, TArray<FLinearColor>& Col, TArray<FLinearColor>& Nrm, TArray<FLinearColor>& Msk);
+
+	/**
+	 * Pixels of the drape map shared by all garments, one repeat of FoldTileM metres: RG = normal of
+	 * soft folds a few centimetres wide, B = their height (0.5 = flat), A = slow variation of the
+	 * dye and wear, used to keep the fabric's colour from being perfectly flat.
+	 */
+	constexpr float FoldTileM = 0.64f;
+	void BuildFoldPixels(int N, TArray<FLinearColor>& Out);
+
 	/**
 	 * Material maps for one repeat of a fabric: base colour (sRGB), tangent-space normal map from
 	 * the weave height (linear), and a mask (linear: G = ambient occlusion in the weave's valleys,
@@ -80,6 +101,8 @@ namespace ReflectAR
 	{
 		TStrongObjectPtr<UTexture2D> BaseColor, Normal, Mask;
 		static const FFabricMaps& Get(const FGarmentSpec& S);
+		/** The drape map (BuildFoldPixels), shared by all garments. */
+		static UTexture2D* Fold();
 		/** The maps of the garment's ribbed bands. */
 		static const FFabricMaps& GetRib(const FGarmentSpec& S);
 	};

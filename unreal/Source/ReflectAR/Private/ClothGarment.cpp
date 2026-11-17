@@ -107,14 +107,16 @@ namespace ReflectAR
 		}
 		const TArray<int32>& Tris = D->Tris;
 		TMap<int64, int32> EdgeSet;                                 // edge -> first opposite vertex
+		TMap<int64, int32> EdgeIdx;                                 // edge -> its index in EA / EB
+		TArray<uint8> Shared;                                       // per edge: used by two triangles
 		auto Key = [](int32 a, int32 b) { return a < b ? (int64(a) << 32) | uint32(b) : (int64(b) << 32) | uint32(a); };
 		for (int t = 0; t < Tris.Num(); t += 3)
 			for (int e = 0; e < 3; e++)
 			{
 				const int a = Tris[t + e], b = Tris[t + (e + 1) % 3], Opp = Tris[t + (e + 2) % 3];
 				const int64 K = Key(a, b);
-				if (const int32* O = EdgeSet.Find(K)) { if (*O != Opp) { R->BA.Add(*O); R->BB.Add(Opp); } }   // bending across the shared edge
-				else { EdgeSet.Add(K, Opp); R->EA.Add(a); R->EB.Add(b); }
+				if (const int32* O = EdgeSet.Find(K)) { if (*O != Opp) { R->BA.Add(*O); R->BB.Add(Opp); } Shared[EdgeIdx[K]] = 1; }   // bending across the shared edge
+				else { EdgeSet.Add(K, Opp); EdgeIdx.Add(K, R->EA.Num()); R->EA.Add(a); R->EB.Add(b); Shared.Add(0); }
 			}
 		R->ERest.SetNum(R->EA.Num()); R->BRest.SetNum(R->BA.Num());
 		// Slack: the free fabric is a little larger than the shape it is held on, as a sewn garment
@@ -127,6 +129,26 @@ namespace ReflectAR
 			R->ERest[i] = V3::Distance(D->Rest[R->EA[i]], D->Rest[R->EB[i]]) * (1.f + Slack * Free(R->EA[i], R->EB[i]));
 		for (int i = 0; i < R->BA.Num(); i++)
 			R->BRest[i] = V3::Distance(D->Rest[R->BA[i]], D->Rest[R->BB[i]]) * (1.f + Slack * Free(R->BA[i], R->BB[i]));
+		// for shading: neighbours per vertex, and distance along the cloth from the nearest edge
+		// of the garment (an edge used by one triangle), relaxed over the mesh edges
+		float SumE = 0.f;
+		for (float e : R->ERest) SumE += e;
+		R->MeanEdge = R->EA.Num() > 0 ? SumE / R->EA.Num() : 0.02f;
+		R->InvDeg.Init(0.f, N); R->EdgeDist.Init(EdgeBand, N);
+		for (int i = 0; i < R->EA.Num(); i++)
+		{
+			R->InvDeg[R->EA[i]] += 1.f; R->InvDeg[R->EB[i]] += 1.f;
+			if (!Shared[i]) R->EdgeDist[R->EA[i]] = R->EdgeDist[R->EB[i]] = 0.f;
+		}
+		for (float& d : R->InvDeg) d = d > 0.f ? 1.f / d : 0.f;
+		for (int Pass = 0; Pass < 8; Pass++)
+			for (int i = 0; i < R->EA.Num(); i++)
+			{
+				float& da = R->EdgeDist[R->EA[i]]; float& db = R->EdgeDist[R->EB[i]];
+				da = FMath::Min(da, db + R->ERest[i]);
+				db = FMath::Min(db, da + R->ERest[i]);
+			}
+		for (float& d : R->EdgeDist) d = Clamp01(d / EdgeBand);
 		R->Ms = float((FPlatformTime::Seconds() - T0) * 1000.0);
 		return R;
 	}
@@ -141,12 +163,15 @@ namespace ReflectAR
 		MaxDist = MoveTemp(R->MaxDist); SkinK = MoveTemp(R->SkinK);
 		EA = MoveTemp(R->EA); EB = MoveTemp(R->EB); BA = MoveTemp(R->BA); BB = MoveTemp(R->BB);
 		ERest = MoveTemp(R->ERest); BRest = MoveTemp(R->BRest);
+		EdgeDist = MoveTemp(R->EdgeDist); InvDeg = MoveTemp(R->InvDeg); MeanEdge = R->MeanEdge;
 		const int N = Data->Rest.Num();
 		X.SetNum(N); Prev.SetNum(N); Target.SetNum(N); LastTarget.SetNum(N); SimN.SetNum(N);
+		Lap.SetNum(N); Ao.Init(1.f, N);
 
 		const int Rn = Data->RenderToSim.Num();
 		BodySection = FMeshSection();
 		BodySection.Pos.SetNum(Rn); BodySection.Nrm.SetNum(Rn); BodySection.Tan.SetNum(Rn);
+		BodySection.Col.Init(FColor::White, Rn);
 		BodySection.UV = Data->UV;
 		BodySection.Tris = Data->RenderTris;
 		for (int i = 0; i < Rn; i++)
@@ -410,7 +435,13 @@ namespace ReflectAR
 		// normals on the welded mesh, so UV seams don't show in the shading
 		GarmentMesher::Normals(X, Data->Tris, SimN);
 		const TArray<int32>& ToSim = Data->RenderToSim;
-		for (int r = 0; r < ToSim.Num(); r++) { BodySection.Pos[r] = X[ToSim[r]]; BodySection.Nrm[r] = SimN[ToSim[r]]; }
+		Shade();
+		for (int r = 0; r < ToSim.Num(); r++)
+		{
+			const int i = ToSim[r];
+			BodySection.Pos[r] = X[i]; BodySection.Nrm[r] = SimN[i];
+			BodySection.Col[r] = FColor(uint8(Ao[i] * 255.f + 0.5f), uint8(EdgeDist[i] * 255.f + 0.5f), 255, 255);
+		}
 		Tangents(BodySection);
 		// ribbed bands: a layer just above the cloth
 		constexpr float Lift = 0.0025f;
@@ -422,6 +453,42 @@ namespace ReflectAR
 			RibSection.Nrm[r] = n;
 		}
 		if (RibSection.Tris.Num() > 0) Tangents(RibSection);
+	}
+
+	/**
+	 * How open each vertex is, for the material: darker in the valleys of folds (its neighbours lie
+	 * on the side its normal points to) and where a body part is close in front of it, as under an
+	 * arm. Eased over a few frames, so it doesn't flicker with the solver.
+	 */
+	void FClothGarment::Shade()
+	{
+		const int N = X.Num();
+		if (Lap.Num() != N || Ao.Num() != N || InvDeg.Num() != N) return;
+		for (V3& l : Lap) l = V3::ZeroVector;
+		for (int k = 0; k < EA.Num(); k++)
+		{
+			const V3 D = X[EB[k]] - X[EA[k]];
+			Lap[EA[k]] += D; Lap[EB[k]] -= D;
+		}
+		const float InvEdge = 1.f / FMath::Max(MeanEdge, 1e-3f);
+		constexpr float Reach = 0.12f;
+		for (int i = 0; i < N; i++)
+		{
+			const V3 P = X[i], Nn = SimN[i];
+			float A = 1.f - FMath::Clamp(Dot(Lap[i], Nn) * InvDeg[i] * InvEdge * 1.6f, -0.06f, 0.35f);
+			auto Occlude = [&](const FCapsuleB& C)
+			{
+				const V3 To = C.Closest(P) - P;
+				const float D2 = To.SizeSquared(), Lim = C.r + Reach;
+				if (D2 > Lim * Lim || D2 < 1e-8f) return;
+				const float D = FMath::Sqrt(D2), Facing = Dot(Nn, To) / D;
+				if (Facing <= 0.f) return;                                   // behind the cloth: the body part it lies on
+				const float Solid = FMath::Min(C.r / D, 1.f);
+				A *= 1.f - 0.65f * Facing * Solid * Solid * Clamp01((Lim - D) / Reach * 2.f);
+			};
+			for (int c = 0; c < Colliders.Num(); c++) if (c != FirstLimb) Occlude(Colliders[c]);   // torso levels, arms and neck (not the shoulder line under the cloth)
+			Ao[i] += (FMath::Clamp(A, 0.3f, 1.f) - Ao[i]) * 0.35f;
+		}
 	}
 
 	/** Per-vertex tangent along the fabric's u direction, with handedness. */

@@ -57,8 +57,9 @@ namespace ReflectAR
 			TSharedPtr<FGarmentMeshData> Data;
 			TArray<float> MaxDist, SkinK, ERest, BRest;
 			TArray<int32> EA, EB, BA, BB;
-			float Ms = 0;
+			float Ms = 0, MeanEdge = 0.02f;
 			bool bAuthored = false;
+			TArray<float> EdgeDist, InvDeg;
 		};
 		static TSharedPtr<FBuilt> Generate(FRestSkeleton Skel, const FGarmentSpec* Spec, TSharedPtr<const FGarmentAsset> Asset);
 		void ApplyPending(double Now);
@@ -96,5 +97,16 @@ namespace ReflectAR
 
 		// render mesh (split at UV seams)
 		TArray<V3> SimN, TAcc, BAcc;
+
+		// shading data per simulated vertex: 0..1 over EdgeBand from an edge of the cloth; 1 / its
+		// number of neighbours; how open it is (creases and the cloth under an arm are darker)
+		TArray<float> EdgeDist, InvDeg, Ao;
+		TArray<V3> Lap;
+		float MeanEdge = 0.02f;
+		void Shade();
+
+	public:
+		/** Width of the band along every edge of the garment that EdgeDist (vertex colour G) spans, m. */
+		static constexpr float EdgeBand = 0.06f;
 	};
 }

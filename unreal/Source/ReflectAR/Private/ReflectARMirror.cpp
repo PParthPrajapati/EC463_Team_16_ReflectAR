@@ -26,7 +26,7 @@
 using namespace ReflectAR;
 
 static const TCHAR* MatDir = TEXT("/Game/ReflectAR/");
-static constexpr float RibTile = 0.08f;          // m per repeat of the rib texture (16 ribs)
+static constexpr float RibTile = 0.16f;          // m per repeat of the rib texture (24 ribs of 2 x 2 stitches)
 static constexpr int RibSectionIndex = FGarmentTrims::NumSections;
 
 AReflectARMirror::AReflectARMirror()
@@ -172,6 +172,10 @@ void AReflectARMirror::CreateGarments()
 			Set[0]->SetTextureParameterValue(TEXT("MaskMap"), Maps.Mask.Get());
 			Set[0]->SetScalarParameterValue(TEXT("Tile"), 1.f / FMath::Max(Sp.Tile, 0.01f));   // UVs are metres of fabric
 			Set[0]->SetScalarParameterValue(TEXT("Sheen"), Sp.Sheen);
+			Set[0]->SetScalarParameterValue(TEXT("Cloth"), Sp.Cloth);
+			Set[0]->SetTextureParameterValue(TEXT("FoldMap"), FFabricMaps::Fold());
+			Set[0]->SetScalarParameterValue(TEXT("FoldTile"), 1.f / FoldTileM);
+			Set[0]->SetScalarParameterValue(TEXT("Fold"), Sp.Fold);
 			for (int k = 1; k < 3; k++)
 			{
 				Set[k] = UMaterialInstanceDynamic::Create(f == 0 ? Trim : TrimFade, this);
@@ -186,6 +190,9 @@ void AReflectARMirror::CreateGarments()
 			Set[3]->SetTextureParameterValue(TEXT("MaskMap"), Rib.Mask.Get());
 			Set[3]->SetScalarParameterValue(TEXT("Tile"), 1.f / RibTile);
 			Set[3]->SetScalarParameterValue(TEXT("Sheen"), 0.2f);
+			Set[3]->SetTextureParameterValue(TEXT("FoldMap"), FFabricMaps::Fold());
+			Set[3]->SetScalarParameterValue(TEXT("FoldTile"), 1.f / FoldTileM);
+			Set[3]->SetScalarParameterValue(TEXT("Fold"), 0.f);          // a band is stretched flat
 			for (int k = 0; k < 4; k++) Keep.Add(Set[k]);
 		}
 	}
@@ -370,8 +377,11 @@ static void Upload(UProceduralMeshComponent* C, int Index, const FMeshSection& S
 {
 	TArray<FVector> V, N; TArray<FVector2D> UV; TArray<FProcMeshTangent> T;
 	ToUE(S, V, N, UV, T);
-	if (bCreate) C->CreateMeshSection(Index, V, S.Tris, N, UV, TArray<FColor>(), T, false);
-	else C->UpdateMeshSection(Index, V, N, UV, TArray<FColor>(), T);
+	// vertex colours carry the cloth's shading data (FMeshSection::Col); sections without any read as white
+	static const TArray<FColor> NoColors;
+	const TArray<FColor>& Col = S.Col.Num() == S.Pos.Num() ? S.Col : NoColors;
+	if (bCreate) C->CreateMeshSection(Index, V, S.Tris, N, UV, Col, T, false);
+	else C->UpdateMeshSection(Index, V, N, UV, Col, T);
 }
 
 void AReflectARMirror::UploadGarment(FGarmentSlot& G)

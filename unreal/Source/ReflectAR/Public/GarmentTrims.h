@@ -11,6 +11,7 @@ namespace ReflectAR
 		TArray<V4> Tan;               // xyz tangent, w handedness
 		TArray<V2> UV;
 		TArray<int32> Tris;
+		TArray<FColor> Col;           // optional, per vertex: R = shading of creases (1 = open), G = distance from an edge of the cloth
 	};
 
 	/**
