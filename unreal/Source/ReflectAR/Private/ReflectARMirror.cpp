@@ -107,7 +107,8 @@ void AReflectARMirror::BeginPlay()
 		L->bAtmosphereSunLight = false;
 	}
 	KeyLight->SetIntensity(KeyLux);
-	KeyLight->SetLightSourceAngle(6.f);
+	KeyLight->SetLightSourceAngle(10.f);            // a large, soft source: a window or a ceiling fixture, not the sun
+	KeyLight->ShadowAmount = 0.6f;                  // a room bounces light into shadows; black ones under an arm read as holes
 	KeyLight->SetCastShadows(true);
 	KeyLight->ContactShadowLength = 0.03f;
 	FillLight->SetIntensity(FillLux);

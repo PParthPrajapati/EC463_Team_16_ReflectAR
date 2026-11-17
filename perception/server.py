@@ -284,6 +284,8 @@ def main():
     ap.add_argument("--video", help="replay a recorded video file instead of the webcam")
     ap.add_argument("--recording", metavar="DIR", help="play a tools/record_spin.py recording (colour + depth) "
                     "back as if it were the RealSense")
+    ap.add_argument("--no-gestures", action="store_true", help="don't send swipe / select events (a recording's "
+                    "arm movements would change the garment being looked at)")
     ap.add_argument("--no-shape", action="store_true", help="don't measure the body's build from depth (garments "
                     "are then cut for an average build)")
     ap.add_argument("--frames", metavar="A:B", help="with --recording: only these frame indices, looped")
@@ -454,6 +456,8 @@ def main():
                        z_skel=round(z_skel_log, 3), z_da=round(z_da_log or 0.0, 3), scale=round(scale, 3))
             if rng.state == "ok":
                 msg["events"] = gest.update(stamp, P_m, vis, fists, uv)
+                if args.no_gestures:
+                    msg["events"] = []; gest.reset()
                 msg["fist_progress"] = round(gest.progress, 3)
                 msg["fist_hand"] = gest.fist_side or ""
                 msg["swipe_progress"], msg["swipe_hand"] = round(gest.swipe_progress, 3), gest.swipe_hand
