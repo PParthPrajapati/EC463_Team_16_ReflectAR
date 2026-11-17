@@ -31,6 +31,8 @@ void AReflectARHUD::Panel(float X, float Y, float W, float H, const FLinearColor
 void AReflectARHUD::DrawHUD()
 {
 	Super::DrawHUD();
+	const AReflectARMirror* Mo = AReflectARMirror::Get(GetWorld());
+	if (Mo && Mo->bMirrorOutput) return;              // the mirror shows the garments and nothing else
 	// the UI proper is a Slate widget over the viewport. Added on the first draw rather than in
 	// BeginPlay: by now the viewport's overlay exists, in a standalone game and in Play-In-Editor alike.
 	if (!Widget.IsValid())

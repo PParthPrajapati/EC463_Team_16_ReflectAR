@@ -54,6 +54,7 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") EMirrorViewMode Mode = EMirrorViewMode::CameraFeed;
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bShowProxy = false;
+	bool bMirrorOutput = false;                    // -ReflectARMirrorOutput: garments alone on black, for the two-way mirror
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bShowDebug = true;
 	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bCubeTest = false;
 	/** Extrapolate the pose to when each frame reaches the screen (P toggles, for A/B). */

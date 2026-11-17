@@ -202,6 +202,12 @@ namespace ReflectAR
 		// rim. Set back, the collar's near side wins; the back of the collar, a neck's depth behind,
 		// stays hidden.
 		Props(Neck, false, 0.02f * u, V3::ZeroVector);
+		// The torso and the thighs are drawn 4 cm further away too. They only have to hide the far side
+		// of the garment, and where the garment is cut closer than they are thick (a hip measured
+		// shallow by a camera looking down at the user) they came through its front: on the mirror,
+		// where the stand-ins are black, a hole in the garment.
+		Props(Torso, false, 0.04f * u, V3::ZeroVector);
+		for (int i = 0; i < 2; i++) Props(Legs + i, false, 0.04f * u, V3::ZeroVector);
 		Props(NeckShell, bMasked, 0.025f * u, Offset(MaskJoints, J, LM::LShoulder, LM::RShoulder));
 		if (Cover.Num() > MaxCover) Cover.SetNum(MaxCover);
 		for (int i = 0; DevHide && i < Total; i++) if (DevHide & (1u << i)) Parts[i].Scale = V3::ZeroVector;

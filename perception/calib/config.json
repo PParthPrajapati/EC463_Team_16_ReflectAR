@@ -130,6 +130,8 @@
   "net": {
     "host": "127.0.0.1",
     "port": 5566,
+    "_mirror_port_note": "second renderer: the mirror output (garments alone on black). It gets the pose and the person mask, not the camera images. 0 = off",
+    "mirror_port": 5567,
     "jpeg_width": 960,
     "jpeg_quality": 75,
     "_mask_note": "person-mask width sent to Unity for occlusion (0 = off)",

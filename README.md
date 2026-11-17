@@ -66,6 +66,7 @@ ReflectAR/
 ├── run_perception.sh            # starts the perception service (macOS / Linux)
 ├── run_perception.bat           # starts the perception service (Windows)
 ├── run_mirror.sh                # macOS: perception + the packaged app (lowest CPU / battery)
+├── run_mirror_output.sh         # macOS: the picture for the two-way mirror (garments alone on black), a second renderer
 ├── run_latency_test.sh          # macOS: latency test, perception with per-stage timing + the app, then a report
 ├── run_shoulder_test.sh         # macOS: shoulder alignment test, BlazePose vs. shoulders you click by hand
 ├── .mcp.json                    # points Claude Code at the Unreal editor's MCP server (127.0.0.1:8000)
@@ -214,6 +215,10 @@ Startup prints a `[backend] …` line saying which device each model runs on, a 
 **2. Start the renderer:** in the Unreal editor press **Play** (*Selected Viewport*, or *New Editor Window* for a window you can resize to the screen).
 
 **Lowest CPU / battery (macOS):** package the app once (*Platforms > Mac > Package Project*, into `unreal/Build/`, which gives `unreal/Build/Mac/ReflectAR.app`), then run `./run_mirror.sh`. It starts perception and the app together, and stops perception when you quit the app with **Esc**. The editor redraws its own windows every frame, so the packaged app uses much less CPU.
+
+**The picture for the two-way mirror:** `./run_mirror_output.sh` starts a second renderer that draws the garments alone on black, from the user's eye point, with no interface: on a two-way mirror black lets the real reflection through, so only the clothing appears, on the reflected body. It runs beside the normal view on the camera image, off the same perception service (which serves it on port 5567 with the pose and person mask but not the camera images), and it is the same program with `-ReflectARMirrorOutput`, so the garment code is shared: what is improved in the camera view shows on the mirror the same way. Swipes change the garment in both. Without arguments it starts full screen; move it to the mirror's display, or pass `-windowed -ResX=540 -ResY=960` to try it in a window.
+
+For the garments to land on the reflection, `perception/calib/config.json` must describe the mirror: `screen` is the display's active area in metres (and its resolution), and `camera_pose` is where the camera's colour lens sits relative to the display's lower-left corner (`pos_m`: x to the right, y up, z out of the glass) and how far it is pitched down (`tilt_down_deg`), for a camera on top of the mirror looking down at the user. One degree of tilt error moves the garment about 3.5 cm on a user 2 m away, so measure it carefully. `tools/tilt_recording.py` re-shoots a recording as a pitched-down camera would have seen it, to test a tilt without the mirror.
 
 Stand **1–3 m** from the screen. Outside that range a prompt shows ("Please step back" / "Come a little closer"), garments dim, and gestures are disabled.
 

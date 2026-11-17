@@ -89,13 +89,17 @@ class Camera:
 
 
 class Streamer:
-    """Single-client TCP server. Keeps only the newest image; JSON events are merged.
+    """TCP server for the renderers. Keeps only the newest image; JSON events are merged.
 
-    Tracking JSON goes out first; the image is JPEG-encoded afterwards on this thread, so
-    neither the encode nor the larger write delays the pose.
+    Two renderers can run off one camera: the view on the camera image (port) and the mirror
+    output (mirror_port), which draws the garments alone and is not sent the camera images. A new
+    connection on a port replaces the one that was there.
+
+    Tracking JSON goes out first; the image is prepared afterwards on this thread, so neither
+    that nor the larger write delays the pose.
     """
 
-    def __init__(self, host, port, jpeg_width=960, jpeg_quality=75, latency_log=None):
+    def __init__(self, host, port, jpeg_width=960, jpeg_quality=75, latency_log=None, mirror_port=0):
         self.jpeg_w, self.jpeg_q = jpeg_width, jpeg_quality
         # latency test: one CSV row per sent frame with its per-stage host times (s, time.time())
         self.lat_log = None
@@ -103,36 +107,40 @@ class Streamer:
             self.lat_log = open(latency_log, "w", buffering=1)
             self.lat_log.write("seq,tracked,t_exposure,t_arrive,t_pose,t_joints,t_send\n")
             print(f"[latency] logging per-stage times to {latency_log}")
-        self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.srv.bind((host, port))
-        self.srv.listen(1)
-        self.conn = None
+        self.conns = {}                              # port -> connection
         self.lock = threading.Condition()
         self.json_msg = None
         self.image = None                            # (capture time, BGR frame or JPEG bytes)
         self.mask = None                             # (capture time, uint8 mask)
-        threading.Thread(target=self._accept, daemon=True).start()
+        for prt, images in ((port, True), (mirror_port, False)):
+            if not prt:
+                continue
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind((host, prt))
+            srv.listen(1)
+            threading.Thread(target=self._accept, args=(srv, prt, images), daemon=True).start()
+            print(f"[net] listening on {host}:{prt}" + ("" if images else " (mirror output: no camera images)"))
         threading.Thread(target=self._send, daemon=True).start()
-        print(f"[net] listening on {host}:{port}")
 
     @property
     def connected(self):
-        return self.conn is not None
+        return bool(self.conns)
 
-    def _accept(self):
+    def _accept(self, srv, port, images):
         while True:
-            c, addr = self.srv.accept()
+            c, addr = srv.accept()
             c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            print(f"[net] renderer connected from {addr}")
+            c.settimeout(1.0)                        # a stalled renderer must not hold up the other one
+            print(f"[net] renderer connected from {addr} on :{port}")
             with self.lock:
-                if self.conn:
-                    self.conn.close()
-                self.conn = c
+                if port in self.conns:
+                    self.conns[port][0].close()
+                self.conns[port] = (c, images)
 
     def push(self, msg, image=None, mask=None):
         with self.lock:
-            if self.conn is None:
+            if not self.conns:
                 msg["events"] = []                   # nobody to act on them: don't replay later
             elif self.json_msg is not None:          # unsent: keep its events
                 msg["events"] = self.json_msg["events"] + msg["events"]
@@ -146,32 +154,38 @@ class Streamer:
     def _send(self):
         while True:
             with self.lock:
-                self.lock.wait_for(lambda: self.json_msg is not None and self.conn is not None)
-                msg, img, mask, conn = self.json_msg, self.image, self.mask, self.conn
+                self.lock.wait_for(lambda: self.json_msg is not None and self.conns)
+                msg, img, mask, conns = self.json_msg, self.image, self.mask, dict(self.conns)
                 self.json_msg, self.image, self.mask = None, None, None
-            try:
-                msg["t_send"] = time.time()
-                body = json.dumps(msg, separators=(",", ":")).encode()
-                conn.sendall(b"J" + struct.pack(">I", len(body)) + body)
-                if self.lat_log and "lat" in msg:
-                    L = msg["lat"]
-                    self.lat_log.write(f"{msg['seq']},{int(msg['tracked'])},{L['exposure']:.6f},{L['arrive']:.6f},"
-                                       f"{L['pose']:.6f},{L['joints']:.6f},{msg['t_send']:.6f}\n")
-                if mask is not None:
-                    t_m, m = mask
-                    conn.sendall(b"M" + struct.pack(">IdHH", m.size + 12, t_m, m.shape[1], m.shape[0]) + m.tobytes())
-                if img is not None:
-                    t_img, frame = img
-                    h, w = frame.shape[:2]
-                    fw, fh = self.jpeg_w, int(h * self.jpeg_w / w)
-                    small = cv2.resize(frame, (fw, fh), interpolation=cv2.INTER_AREA)
-                    rgb = cv2.cvtColor(cv2.flip(small, 0), cv2.COLOR_BGR2RGB).tobytes()   # bottom row first, like a Unity texture
-                    conn.sendall(b"R" + struct.pack(">IdHH", len(rgb) + 12, t_img, fw, fh) + rgb)
-            except OSError:
-                print("[net] renderer disconnected")
-                with self.lock:
-                    if self.conn is conn:
-                        self.conn = None
+            msg["t_send"] = time.time()
+            body = json.dumps(msg, separators=(",", ":")).encode()
+            packets = [b"J" + struct.pack(">I", len(body)) + body]
+            if mask is not None:
+                t_m, m = mask
+                packets.append(b"M" + struct.pack(">IdHH", m.size + 12, t_m, m.shape[1], m.shape[0]) + m.tobytes())
+            rgb = None
+            for port, (conn, images) in conns.items():
+                try:
+                    for pk in packets:
+                        conn.sendall(pk)
+                    if img is not None and images:
+                        if rgb is None:
+                            t_img, frame = img
+                            h, w = frame.shape[:2]
+                            fw, fh = self.jpeg_w, int(h * self.jpeg_w / w)
+                            small = cv2.resize(frame, (fw, fh), interpolation=cv2.INTER_AREA)
+                            rgb = cv2.cvtColor(cv2.flip(small, 0), cv2.COLOR_BGR2RGB).tobytes()   # bottom row first, like a Unity texture
+                            rgb = b"R" + struct.pack(">IdHH", len(rgb) + 12, t_img, fw, fh) + rgb
+                        conn.sendall(rgb)
+                except OSError:
+                    print(f"[net] renderer on :{port} disconnected")
+                    with self.lock:
+                        if self.conns.get(port, (None,))[0] is conn:
+                            del self.conns[port]
+            if self.lat_log and "lat" in msg:
+                L = msg["lat"]
+                self.lat_log.write(f"{msg['seq']},{int(msg['tracked'])},{L['exposure']:.6f},{L['arrive']:.6f},"
+                                   f"{L['pose']:.6f},{L['joints']:.6f},{msg['t_send']:.6f}\n")
 
 
 class HandWorker:
@@ -342,7 +356,7 @@ def main():
     K = Intrinsics(**cam.intrinsics) if sensor else Intrinsics.load(cc, W, H)
     to_mirror = CameraToMirror(cfg["camera_pose"])
     net = Streamer(cfg["net"]["host"], cfg["net"]["port"], cfg["net"]["jpeg_width"], cfg["net"]["jpeg_quality"],
-                   args.latency_log)
+                   args.latency_log, cfg["net"].get("mirror_port", 0))
     gest = Gestures(cfg["gestures"])
     shape = BodyShape(cfg.get("shape")) if sensor else None    # the user's build, from measured depth
     rng = RangeCheck(*cfg["range_m"])

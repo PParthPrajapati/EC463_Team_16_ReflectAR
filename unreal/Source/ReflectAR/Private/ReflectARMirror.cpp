@@ -75,7 +75,14 @@ UMaterialInterface* AReflectARMirror::LoadMat(const TCHAR* Name) const
 void AReflectARMirror::BeginPlay()
 {
 	Super::BeginPlay();
-	Tracking = MakeUnique<FTrackingClient>();
+	// -ReflectARMirrorOutput: this process is the picture for the two-way mirror. The garments alone
+	// on black, seen from the user's eye, with no interface and no camera image (which perception
+	// doesn't send on this port). It runs beside the view on the camera image, off the same camera.
+	bMirrorOutput = FParse::Param(FCommandLine::Get(), TEXT("ReflectARMirrorOutput"));
+	int32 Port = bMirrorOutput ? 5567 : 5566;
+	FParse::Value(FCommandLine::Get(), TEXT("ReflectARPort="), Port);
+	if (bMirrorOutput) Mode = EMirrorViewMode::Mirror;
+	Tracking = MakeUnique<FTrackingClient>(TEXT("127.0.0.1"), Port);
 	Params = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/ReflectAR/MPC_ReflectAR.MPC_ReflectAR"));
 
 	MirrorWorld->SetRelativeTransform(FTransform(BodyBasis(), FVector::ZeroVector, FVector(100.0)));
@@ -212,7 +219,7 @@ void AReflectARMirror::HandleInput()
 		if (Pressed(EKeys::Right)) Browse(+1);
 		if (Pressed(EKeys::Left)) Browse(-1);
 		if (Pressed(EKeys::SpaceBar)) Select();
-		if (Pressed(EKeys::M)) Mode = Mode == EMirrorViewMode::CameraFeed ? EMirrorViewMode::Mirror : EMirrorViewMode::CameraFeed;
+		if (Pressed(EKeys::M) && !bMirrorOutput) Mode = Mode == EMirrorViewMode::CameraFeed ? EMirrorViewMode::Mirror : EMirrorViewMode::CameraFeed;
 		if (Pressed(EKeys::B)) bShowProxy = !bShowProxy;
 		if (Pressed(EKeys::D)) bShowDebug = !bShowDebug;
 		if (Pressed(EKeys::C)) bCubeTest = !bCubeTest;
@@ -255,7 +262,8 @@ UTexture2D* AReflectARMirror::Swatch(int32 I) const
 
 // ======================================================================== unattended checks
 // -ReflectARShots=<seconds> saves a screenshot (UI included) to Saved/Screenshots at that interval,
-// -ReflectARCycle=<seconds> steps through the garments, -ReflectARMirrorMode starts in Mirror mode,
+// -ReflectARCycle=<seconds> steps through the garments, -ReflectARMirrorMode starts in Mirror mode
+// (-ReflectARMirrorOutput, read in BeginPlay, is the mirror's own process: see run_mirror_output.sh),
 // -ReflectARNoStab starts with the skeleton's depth stabilisation off, -ReflectARNoMask with the
 // occluders not trimmed to the person mask, -ReflectARNoProxy without the occluders at all,
 // -ReflectARHide=<bits> without occluder part i for each set bit i (FBodyProxy's enum),
