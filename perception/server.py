@@ -375,7 +375,7 @@ def main():
         res = pose(frame)
         t_pose = time.time()
         pose_ms = 0.9 * pose_ms + 0.1 * (t_pose - t0) * 1000
-        msg = {"t": t_cap, "seq": seq, "tracked": False, "range": "none", "dist": 0.0,
+        msg = {"t": t_cap, "seq": seq, "sensor": sensor, "tracked": False, "range": "none", "dist": 0.0,
                "events": [], "fist_progress": 0.0, "fist_hand": "", "swipe_progress": 0.0, "swipe_hand": "",
                "cam": {**K.as_dict(), "pos": cfg["camera_pose"]["pos_m"],
                        "tilt": cfg["camera_pose"].get("tilt_down_deg", 0.0)},

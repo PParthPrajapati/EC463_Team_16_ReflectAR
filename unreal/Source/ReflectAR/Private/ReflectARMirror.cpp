@@ -265,8 +265,9 @@ void AReflectARMirror::DevTick(double NowT)
 	if (DevCycleEvery > 0.f && NowT >= DevNextCycle) { Browse(+1); DevNextCycle = NowT + DevCycleEvery; }
 	if (DevShotEvery > 0.f && NowT >= DevNextShot)
 	{
-		const FString Name = FString::Printf(TEXT("%s/shot_%03d_%s.png"), *(FPaths::ProjectSavedDir() / TEXT("Screenshots")), DevShots++,
-			*GarmentCatalog()[Current].Name.Replace(TEXT(" "), TEXT("")));
+		// (the name carries how far the user is turned, so shots of a turn can be picked out)
+		const FString Name = FString::Printf(TEXT("%s/shot_%03d_%s_yaw%+04d.png"), *(FPaths::ProjectSavedDir() / TEXT("Screenshots")), DevShots++,
+			*GarmentCatalog()[Current].Name.Replace(TEXT(" "), TEXT("")), bTracked ? FMath::RoundToInt(Rig.YawDeg) : 0);
 		FScreenshotRequest::RequestScreenshot(Name, true, false);
 		DevNextShot = NowT + DevShotEvery;
 	}
@@ -491,6 +492,7 @@ void AReflectARMirror::Tick(float Dt)
 		const double Target = bMatchFeed ? Tracking->FeedCaptureTime : NowT + Tracking->DisplayLatency() + LeadMs * 0.001;
 		Tracking->Predict(Target, bPredict, bPredict && !bMatchFeed);
 		if (!bHadBody) Shape.Reset(Rig);                  // a new person: measure them from scratch
+		Rig.bDepthMeasured = F->bSensorDepth;
 		if (F->Cam.Valid()) Rig.CamPos = CamPosBody(F->Cam);     // depth is stabilised along the camera's lines of sight
 		Rig.Update(Tracking->Joints, Tracking->Visibility, Dt, !bHadBody || NowT - LastTracked > 0.5);
 		bHadBody = true;

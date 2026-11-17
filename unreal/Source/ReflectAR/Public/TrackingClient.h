@@ -31,6 +31,7 @@ namespace ReflectAR
 		double t = 0, t_send = 0;     // capture / send time, perception clock (s)
 		int32 Seq = 0;
 		bool bTracked = false;
+		bool bSensorDepth = false;                 // joint depths are measured by a depth camera, not estimated
 		FString Range = TEXT("none");
 		float Dist = 0;
 		TArray<FString> Events;

@@ -105,6 +105,7 @@ namespace ReflectAR
 		F.t = Num(O, TEXT("t"), 0); F.t_send = Num(O, TEXT("t_send"), 0);
 		F.Seq = int32(Num(O, TEXT("seq"), 0));
 		O->TryGetBoolField(TEXT("tracked"), F.bTracked);
+		O->TryGetBoolField(TEXT("sensor"), F.bSensorDepth);
 		O->TryGetStringField(TEXT("range"), F.Range);
 		F.Dist = float(Num(O, TEXT("dist"), 0));
 		O->TryGetStringArrayField(TEXT("events"), F.Events);

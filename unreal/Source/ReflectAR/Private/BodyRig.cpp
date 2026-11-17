@@ -51,7 +51,11 @@ namespace ReflectAR
 		float& Sign = PairSign[Which];
 		const float Want = Tracked >= 0.f ? 1.f : -1.f;
 		if (Sign == 0.f || (Want != Sign && (Fore < 0.45f * Width || FMath::Abs(Tracked) > 0.25f * Width))) Sign = Want;
-		const float w = SmoothStep(0.f, 1.f, (Fore / FMath::Max(Width, 1e-3f) - 0.28f) / 0.22f);
+		// (an estimated depth is flattened from the first degrees of a turn; a measured one only fails
+		// once one joint hides the other. On a D415 recording the shoulder joints sat 17 % closer
+		// together seen from behind than from the front, which read as 35 degrees of turn.)
+		const float From = bDepthMeasured ? 0.62f : 0.28f, Over = bDepthMeasured ? 0.25f : 0.22f;
+		const float w = SmoothStep(0.f, 1.f, (Fore / FMath::Max(Width, 1e-3f) - From) / Over);
 		const float Delta = Tracked + (Sign * Fore - Tracked) * w;
 		const float Shift = (Mid + 0.5f * Delta) - Rho[b];
 		Rho[a] = Mid - 0.5f * Delta;

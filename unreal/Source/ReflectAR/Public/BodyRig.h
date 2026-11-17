@@ -76,6 +76,10 @@ namespace ReflectAR
 		V3 CamPos = V3(0.151f, 0.204f, 0.f);
 		/** Depth stabilisation (above). Off = use the tracked joints as they come. */
 		bool bStabilise = true;
+		/** The joints' depths are measured by a depth camera. Then the tracked depth difference across
+		 * the shoulders is believed until they are nearly side-on (one hides the other): they also look
+		 * narrower from behind and from pose to pose, which is not a turn. */
+		bool bDepthMeasured = false;
 		float DepthMinCutoff = 0.35f;     // Hz at rest
 		float DepthBeta = 4.f;            // Hz per m/s of depth speed
 		/** How far the chest is turned away from the camera, degrees (0 = facing it), signed. */
