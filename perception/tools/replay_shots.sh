@@ -20,4 +20,4 @@ for i in $(seq 1 100); do
     pgrep -q UnrealEditor || { echo "the renderer exited: see $LOG/replay_renderer.log"; break; }
 done
 pkill -f 'UnrealEditor.*-game'; pkill -f 'server.py.*--recording'
-mkdir -p "$OUT" && mv "$ROOT"/unreal/Saved/Screenshots/shot_*.png "$OUT"/ && echo "$(ls "$OUT" | wc -l | tr -d ' ') screenshots in $OUT"
+mkdir -p "$OUT" && cd "$ROOT" && mv "$ROOT"/unreal/Saved/Screenshots/shot_*.png "$OUT"/ && echo "$(ls "$OUT" | wc -l | tr -d ' ') screenshots in $OUT"

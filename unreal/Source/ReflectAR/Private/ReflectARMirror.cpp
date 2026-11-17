@@ -245,7 +245,8 @@ UTexture2D* AReflectARMirror::Swatch(int32 I) const
 // -ReflectARShots=<seconds> saves a screenshot (UI included) to Saved/Screenshots at that interval,
 // -ReflectARCycle=<seconds> steps through the garments, -ReflectARMirrorMode starts in Mirror mode,
 // -ReflectARNoStab starts with the skeleton's depth stabilisation off, -ReflectARNoMask with the
-// occluders not trimmed to the person mask, -ReflectARGarment=<n> on garment n,
+// occluders not trimmed to the person mask, -ReflectARNoProxy without the occluders at all,
+// -ReflectARHide=<bits> without occluder part i for each set bit i (FBodyProxy's enum),
 // -ReflectARProxy shows the body stand-ins.
 void AReflectARMirror::DevTick(double NowT)
 {
@@ -257,10 +258,8 @@ void AReflectARMirror::DevTick(double NowT)
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARMirrorMode"))) Mode = EMirrorViewMode::Mirror;
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARProxy"))) bShowProxy = true;
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoStab"))) Rig.bStabilise = false;
+		{ int32 Hide = 0; if (FParse::Value(FCommandLine::Get(), TEXT("ReflectARHide="), Hide)) Proxy.DevHide = uint32(Hide); }   // bit i hides occluder part i
 		if (FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoMask"))) bTrimToMask = false;
-		int32 DevGarment = 0;
-		FParse::Value(FCommandLine::Get(), TEXT("ReflectARGarment="), DevGarment);
-		for (int32 i = 0; i < DevGarment; i++) Browse(+1);
 		DevNextShot = NowT + DevShotEvery; DevNextCycle = NowT + DevCycleEvery;
 	}
 	if (DevCycleEvery > 0.f && NowT >= DevNextCycle) { Browse(+1); DevNextCycle = NowT + DevCycleEvery; }
@@ -415,7 +414,24 @@ void AReflectARMirror::LogStats(float Dt)
 	if (NowT - StatT < 3.0) return;
 	int Rb = 0;
 	for (const FGarmentSlot& G : Garments) Rb += G.Sim->RebuildCount;
+	UE_LOG(LogTemp, Log, TEXT("[ReflectAR mould] valid %d shoulders %d: %.3f %.3f %.3f %.3f m above the joints | from perception: %d values, first %.3f"), int(Rig.Mould.bValid), int(Rig.Mould.bShoulders), Rig.Mould.Sh[0], Rig.Mould.Sh[1], Rig.Mould.Sh[2], Rig.Mould.Sh[3], Tracking->Latest.IsValid() ? Tracking->Latest->ShapeSh.Num() : -1, Tracking->Latest.IsValid() && Tracking->Latest->ShapeSh.Num() ? Tracking->Latest->ShapeSh[0] : 0.f);
 	UE_LOG(LogTemp, Log, TEXT("[ReflectAR body] yaw %.1f deg, shoulders %.3f m, hips %.3f m, torso %.3f m, shoulder depths L %.3f R %.3f"), Rig.YawDeg, Rig.ShoulderW, Rig.HipW, Rig.TorsoLen, Rig.J[LM::LShoulder].Z, Rig.J[LM::RShoulder].Z);
+	{
+		// where the garment sits on the chest: per side, how far out it reaches and how high its top is
+		// at three distances from the centre line (chest frame: x = the user's right, y up from the shoulder joints)
+		const ReflectAR::FFrame Cf = Rig.ChestFrame();
+		float OutL = 0, OutR = 0, Top[2][3] = { { -1, -1, -1 }, { -1, -1, -1 } };
+		for (const V3& P : Cg.BodySection.Pos)
+		{
+			const V3 l = Cf.ToLocal(P);
+			if (l.Y > -0.12f) { OutL = FMath::Min(OutL, l.X); OutR = FMath::Max(OutR, l.X); }
+			for (int k = 0; k < 3; k++)
+				if (FMath::Abs(FMath::Abs(l.X) - (0.08f + 0.04f * k)) < 0.01f) Top[l.X > 0][k] = FMath::Max(Top[l.X > 0][k], l.Y);
+		}
+		const V3 ls = Cf.ToLocal(Rig.J[LM::LShoulder]), rs = Cf.ToLocal(Rig.J[LM::RShoulder]), le = Cf.ToLocal(Rig.J[LM::LElbow]), re = Cf.ToLocal(Rig.J[LM::RElbow]);
+		UE_LOG(LogTemp, Log, TEXT("[ReflectAR garment] reach L %.3f R %.3f | top at 8/12/16 cm: L %.3f %.3f %.3f  R %.3f %.3f %.3f | joints: Lsh (%.3f %.3f %.3f) Rsh (%.3f %.3f %.3f) Lel (%.3f %.3f %.3f) Rel (%.3f %.3f %.3f)"),
+			OutL, OutR, Top[0][0], Top[0][1], Top[0][2], Top[1][0], Top[1][1], Top[1][2], ls.X, ls.Y, ls.Z, rs.X, rs.Y, rs.Z, le.X, le.Y, le.Z, re.X, re.Y, re.Z);
+	}
 	UE_LOG(LogTemp, Log, TEXT("[ReflectAR stats] avg %.0f fps, worst frame %.0f ms, cloth max %.1f ms, rebuilds +%d (last %.0f ms), verts %d"),
 		StatN / FMath::Max(StatSum, 1e-3f), StatWorst * 1000.f, StatCloth, Rb - StatRebuilds, Cg.LastBuildMs, Cg.VertexCount());
 	StatT = NowT; StatWorst = StatSum = StatCloth = 0; StatN = 0; StatRebuilds = Rb;
@@ -487,9 +503,11 @@ void AReflectARMirror::Tick(float Dt)
 
 	const bool bMirror = Mode == EMirrorViewMode::Mirror;
 	MirrorWorld->SetRelativeScale3D(FVector(100.0, 100.0, bMirror ? -100.0 : 100.0));   // body z, after the basis change
-	// key light from above, beside the screen, falling on the (real or reflected) front of the body
+	// key light from above and only a little to one side, falling on the (real or reflected) front of
+	// the body: further to the side, the head's stand-in (larger than the head) throws a hard shadow
+	// across one shoulder of the garment, which reads as a piece missing beside the neck
 	const float Zs = bMirror ? 1.f : -1.f;
-	KeyLight->SetWorldRotation(BodyDirToUE(V3(0.55f, -0.6f, Zs)).Rotation());
+	KeyLight->SetWorldRotation(BodyDirToUE(V3(0.2f, -0.5f, Zs)).Rotation());
 	FillLight->SetWorldRotation(BodyDirToUE(V3(-0.7f, -0.2f, Zs)).Rotation());
 
 	// ---- garments: background builds for all, so swiping never waits; simulate the one worn
@@ -521,7 +539,8 @@ void AReflectARMirror::Tick(float Dt)
 			Shape.Measure(Tracking->MaskBytes, Tracking->MaskW, Tracking->MaskH, Rows, MaskJoints, Rig, CamPosBody(F->Cam), Dt * 4.f);
 		}
 	}
-	UpdateProxy(Rig.Valid && Visible > 0.f, bMaskOn);
+	static const bool bDevNoProxy = FParse::Param(FCommandLine::Get(), TEXT("ReflectARNoProxy"));   // garments alone, nothing hidden behind the body
+	UpdateProxy(Rig.Valid && Visible > 0.f && !bDevNoProxy, bMaskOn);
 	UpdateFeedQuad();
 	Cube->SetVisibility(bCubeTest && bMirror);
 	if (bCubeTest && bMirror && F.IsValid())

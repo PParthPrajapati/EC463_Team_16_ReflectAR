@@ -99,6 +99,18 @@ namespace ReflectAR
 		// shoulders, so the stand-in stops below them and is slimmer than the cloth's own colliders
 		Place(Parts[Torso], B.HipC, B.ShC - B.Up * 0.1f * u, B.ShoulderW * 0.4f * Pw, 0.085f * u * Pd, B.Fwd);
 		Place(Parts[Neck], B.ShC, B.HeadC - B.Up * 0.05f * u, 0.045f * u, 0.045f * u, B.Fwd);
+		// The shoulder slopes (trapezius) between the neck and each shoulder joint. Without them the
+		// inside of the garment's back shows through the collar beside the neck, where the body is.
+		// They lie just under the yoke: under the shoulders' measured tops when the depth camera has
+		// them (the yoke is fitted to those, see FitGarmentAsset), else under the authored slope.
+		for (int s = 0; s < 2; s++)
+		{
+			const V3 Tip = J[s == 0 ? LM::LShoulder : LM::RShoulder] - B.ShC;
+			const float r = 0.03f * u, Below = 0.024f * u + r;      // the cloth may sag 12 mm below its cut
+			const float hNeck = B.Mould.bShoulders ? B.Mould.Sh[0] : 0.083f * u, hTip = B.Mould.bShoulders ? B.Mould.Sh[FBodyMould::ShN - 1] : 0.045f * u;
+			if (Garment) Place(Parts[Traps + s], B.ShC + Tip * 0.4f + B.Up * (hNeck - Below), B.ShC + Tip * 0.85f + B.Up * (hTip - Below), r, r, B.Fwd);
+			else Parts[Traps + s].Scale = V3::ZeroVector;
+		}
 		// (no wider than the measured hips, or on a slender build the thighs would stand out through
 		// a hem cut to those hips)
 		float HipA, HipD;
@@ -172,6 +184,7 @@ namespace ReflectAR
 		for (int i = 0; i < Exposed; i++) Props(i, false, 0.f, V3::ZeroVector);
 		for (int i = Cores; i < Total; i++) Props(i, false, 0.f, V3::ZeroVector);
 		if (Cover.Num() > MaxCover) Cover.SetNum(MaxCover);
+		for (int i = 0; DevHide && i < Total; i++) if (DevHide & (1u << i)) Parts[i].Scale = V3::ZeroVector;
 		Emit();
 	}
 

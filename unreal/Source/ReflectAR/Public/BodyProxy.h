@@ -31,6 +31,8 @@ namespace ReflectAR
 		TArray<V2> UV1, UV2, UV3;
 		TArray<FCapsuleB> Cover;                 // garment outline (body coords), for the material
 		bool bVisible = false;
+		/** Debugging: bit i hides part i (see the enum below). */
+		uint32 DevHide = 0;
 
 		FBodyProxy();
 		/**
@@ -56,7 +58,8 @@ namespace ReflectAR
 			Covered = 6,                           // 2 per arm: sleeved segments
 			Exposed = 10,                          // 2 per arm: bare segments
 			Hands = 14, Thumbs = 16, Head = 18, Count = 19,
-			Cores = Count, Total = Count + Count - Exposed,   // fitted copies of Exposed..Head
+			Cores = Count, Traps = Count + Count - Exposed,   // fitted copies of Exposed..Head, then the two shoulder slopes
+			Total = Traps + 2,
 		};
 		static int Core(int i) { return Cores + i - Exposed; }
 
