@@ -33,7 +33,7 @@ if (-not $Py) {
     Write-Host "    then open a NEW terminal and run setup.bat again."
     exit 1
 }
-$PyArgs = if ($Py.Count -gt 1) { $Py[1..($Py.Count - 1)] } else { @() }
+$PyArgs = @(if ($Py.Count -gt 1) { $Py[1..($Py.Count - 1)] })
 Ok ("Using " + (& $Py[0] @PyArgs --version))
 
 $Venv = Join-Path $Root 'perception\.venv'
