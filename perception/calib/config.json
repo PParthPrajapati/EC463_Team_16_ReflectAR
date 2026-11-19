@@ -1,0 +1,145 @@
+{
+  "camera": {
+    "_source_note": "auto = an Intel RealSense when one is connected, else the webcam below. realsense | webcam to force one.",
+    "source": "auto",
+    "realsense": {
+      "_note": "Colour + depth aligned to it; the mode follows the USB link. D415 limits: colour 60 fps up to 960x540 (30 at 1280x720), depth 90 fps up to 848x480 (30 at 1280x720), and a USB 2 link only manages 640x480 at 15. A mode the camera doesn't offer falls back to the fastest one no larger. preset: a D400 visual preset name (Default, Hand, High Accuracy, High Density, Medium Density) or null to leave it. latency_s: extra delay on top of the frame's own exposure timestamp.",
+      "usb3": {"color": [960, 540], "color_fps": 60, "depth": [848, 480], "depth_fps": 90},
+      "usb2": {"color": [640, 480], "color_fps": 15, "depth": [640, 480], "depth_fps": 15},
+      "preset": null,
+      "_reset_note": "Power-cycle the camera on start (~4 s): a D415 stopped or killed earlier often streams no frames until reset or replugged. A start that is refused or sends no frames is retried (with a reset) up to start_tries times.",
+      "reset_on_start": true,
+      "start_tries": 4,
+      "latency_s": 0.0
+    },
+    "index": 0,
+    "api": "auto",
+    "width": 1280,
+    "height": 720,
+    "hfov_deg": 70.0,
+    "intrinsics_file": "calib/intrinsics.json",
+    "_latency_note": "Exposure -> frame-delivered delay. A frame's capture time = read time - latency_s. Fine-tune by eye with [ / ] in Unity's Mirror mode.",
+    "latency_s": 0.04
+  },
+  "screen": {
+    "_note": "Lit picture area of the display behind the two-way glass: Dell U2722D (27in, 596.7 x 335.7 mm, 2560x1440) mounted portrait. Mirror-frame origin = lower-left corner. (The 14in MacBook Pro's own screen: 0.302 x 0.196 m, 3024x1964.)",
+    "w_m": 0.3357,
+    "h_m": 0.5967,
+    "res_x": 1440,
+    "res_y": 2560,
+    "_lean_note": "How far the glass leans back (top further from the user), degrees. Garments fall along the real vertical.",
+    "lean_back_deg": 6.0,
+    "_scale_note": "Size of the mirror output's picture, about the user's chest (1 = as computed).",
+    "picture_scale": 1.041
+  },
+  "camera_pose": {
+    "_note": "Camera optical centre in Mirror frame (metres: x right, y up, z out of the glass towards the user) and downward pitch relative to the glass. Measured on the mirror: 6 5/8 in right, 24 1/4 in up, 1/8 in out. With a RealSense, measure to its colour (RGB) lens, not the middle of the bar. (The MacBook's own camera: [0.151, 0.204, 0.0].)",
+    "pos_m": [
+      0.138,
+      0.616,
+      0.003
+    ],
+    "_tilt_note": "Downward pitch relative to the glass (which leans back 6 degrees). Tilt, pos_m[0] and screen.picture_scale were set by eye against the reflection on 2026-11-17 with the mirror output's calibration keys (arrows, U / D); the tape measure gave x = 0.168.",
+    "tilt_down_deg": 7.75
+  },
+  "range_m": [
+    1.0,
+    3.0
+  ],
+  "depth": {
+    "_note": "Weight of the Depth Anything metric estimate vs the BlazePose skeleton-scale estimate when fusing user distance (webcam only). *_surface_offset_m: depth from the measured body surface back to the joint centre.",
+    "fusion_weight": 0.7,
+    "torso_surface_offset_m": 0.1,
+    "limb_surface_offset_m": 0.04,
+    "face_surface_offset_m": 0.01
+  },
+  "compute": {
+    "_note": "backend: auto (ONNX Runtime if installed, else OpenVINO) | onnx | openvino. *_device: auto | ane (Apple Neural Engine) | gpu (Apple GPU, NVIDIA TensorRT/CUDA, DirectML) | cpu. auto = ane on Macs, gpu with NVIDIA, else cpu. *_threads: CPU inference thread budgets (only used when a model runs on the CPU), 0 = auto (depth half the cores). Kept small: big pools burn battery for ~1 ms. Depth is capped because the distance it feeds is smoothed at < 1 Hz; depth_idle_hz applies when nobody is tracked.",
+    "backend": "auto",
+    "pose_device": "auto",
+    "depth_device": "auto",
+    "pose_threads": 2,
+    "depth_threads": 2,
+    "depth_max_hz": 2.0,
+    "depth_idle_hz": 0.5,
+    "idle_pose_fps": 6.0
+  },
+  "filters": {
+    "_note": "PosePredictor: One-Euro at rest, constant-velocity Kalman (accel_std, m/s^2) once the smoothed speed passes gate_speed (m/s). meas_std = landmark noise per Mirror axis (m).",
+    "joints": {
+      "mincutoff": 1.2,
+      "beta": 0.8,
+      "accel_std": 25.0,
+      "gate_accel_std": 2.0,
+      "gate_speed": [
+        0.1,
+        0.35
+      ],
+      "meas_std": [
+        0.004,
+        0.004,
+        0.02
+      ]
+    },
+    "eye": {
+      "mincutoff": 1.0,
+      "beta": 0.5,
+      "accel_std": 25.0,
+      "gate_accel_std": 2.0,
+      "gate_speed": [
+        0.1,
+        0.35
+      ],
+      "meas_std": [
+        0.004,
+        0.004,
+        0.02
+      ]
+    },
+    "scale_ema": 0.05
+  },
+  "predict": {
+    "_note": "Sent to Unity, which extrapolates the pose to each rendered frame's display time: x + v*tau*(1-exp(-h/tau)), h <= max_horizon_s. blend_tc_s eases the hand-over when a new perception frame arrives.",
+    "display_latency_s": 0.025,
+    "horizon_tau_s": 0.35,
+    "max_horizon_s": 0.25,
+    "blend_tc_s": 0.015
+  },
+  "shape": {
+    "_note": "The user's build, measured from the depth camera (bodyshape.py): torso half-width and half-depth at six heights, a 16 x 5 mould of the torso's front and the shoulder tops, averaged over time_constant_s while they face the camera (max_turn: shoulder depth difference / shoulder width). Garments are cut to it. Needs a RealSense; with a webcam the renderer uses the person mask's silhouette instead.",
+    "time_constant_s": 1.5,
+    "max_turn": 0.3,
+    "min_samples": 12
+  },
+  "gestures": {
+    "_note": "swipe distances / speeds are in shoulder widths (sw) in the 2D image, so they don't depend on distance. swipe_direction: natural = like scrolling (move the hand right to bring in the item on the left), pointer = the opposite.",
+    "swipe_direction": "natural",
+    "swipe_min_dx_sw": 0.8,
+    "swipe_peak_speed_sw": 1.8,
+    "swipe_start_speed_sw": 1.0,
+    "swipe_end_speed_sw": 0.35,
+    "swipe_max_dur_s": 1.0,
+    "swipe_min_dx_over_dy": 1.0,
+    "swipe_min_vis": 0.25,
+    "swipe_min_height_sw": 0.35,
+    "swipe_cooldown_s": 0.3,
+    "swipe_rest_sw": 0.2,
+    "swipe_settle_s": 0.6,
+    "swipe_return_window_s": 3.0,
+    "swipe_return_speed_ratio": 0.8,
+    "fist_blocks_swipe_after": 0.12,
+    "fist_hold_s": 5.0,
+    "fist_gap_tolerance_s": 0.5,
+    "fist_max_drift_m": 0.15
+  },
+  "net": {
+    "host": "127.0.0.1",
+    "port": 5566,
+    "_mirror_port_note": "second renderer: the mirror output (garments alone on black). It gets the pose and the person mask, not the camera images. 0 = off",
+    "mirror_port": 5567,
+    "jpeg_width": 960,
+    "jpeg_quality": 75,
+    "_mask_note": "person-mask width sent to Unity for occlusion (0 = off)",
+    "mask_width": 256
+  }
+}

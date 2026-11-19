@@ -1,0 +1,177 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "BodyRig.h"
+#include "BodyProxy.h"
+#include "ClothGarment.h"
+#include "TrackingClient.h"
+#include "ReflectARMirror.generated.h"
+
+class UProceduralMeshComponent;
+class UDirectionalLightComponent;
+class UPostProcessComponent;
+class UStaticMeshComponent;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
+class UMaterialParameterCollection;
+
+UENUM()
+enum class EMirrorViewMode : uint8 { CameraFeed, Mirror };
+
+/** The camera this frame, for UMirrorLocalPlayer (Unreal world) and the HUD (body coords). */
+struct FMirrorView
+{
+	bool bValid = false;
+	FVector Origin = FVector::ZeroVector;          // cm, Unreal world
+	FMatrix Rotation = FMatrix::Identity;          // world -> view (x right, y up, z forward)
+	FMatrix Projection = FMatrix::Identity;        // reversed-Z, off-axis
+	// the same in body coords, to project points for the HUD
+	ReflectAR::V3 EyeB, RightB, UpB, FwdB;
+	float P00 = 1, P20 = 0, P11 = 1, P21 = 0;
+};
+
+/**
+ * Top-level controller: camera modes, body proxy, garment catalogue, gestures, lighting.
+ *
+ * CameraFeed: a "digital mirror" for the laptop. A virtual camera with the webcam's intrinsics
+ *   sits at the webcam's pose; the image is mirrored and garments are drawn over the live feed.
+ * Mirror: what the two-way-mirror build needs. Black background, garments placed on the
+ *   reflected body (MirrorWorld mirrored in body z), rendered with an off-axis frustum from the
+ *   tracked eye through the physical screen rectangle.
+ *
+ * Everything body-related lives under MirrorWorld, whose transform maps body coordinates (m) to
+ * Unreal world space. The materials come from Content/Python/reflectar_setup.py.
+ */
+UCLASS()
+class REFLECTAR_API AReflectARMirror : public AActor
+{
+	GENERATED_BODY()
+
+public:
+	AReflectARMirror();
+	static AReflectARMirror* Get(const UWorld* World);
+
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") EMirrorViewMode Mode = EMirrorViewMode::CameraFeed;
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bShowProxy = false;
+	bool bMirrorOutput = false;                    // -ReflectARMirrorOutput: garments alone on black, for the two-way mirror
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bShowDebug = true;
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bCubeTest = false;
+	/** Extrapolate the pose to when each frame reaches the screen (P toggles, for A/B). */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bPredict = true;
+	/** Extra prediction lead (ms) on top of config.json's latencies, Mirror mode. Tune with [ and ]. */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") float LeadMs = 0.f;
+	/** Trim the hands / bare arms / head occluders to perception's person mask (O toggles). */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bTrimToMask = true;
+	/** Latency test (L toggles): prediction off, a large marker on the right wrist, and a CSV of
+	 *  when each perception frame arrived, was picked up and reached the screen
+	 *  (Saved/ReflectAR/latency_unreal.csv; joined with perception's --latency-log CSV). */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR") bool bLatencyTest = false;
+
+	// physical lighting: lux, with a camera exposure of EV100 ~10 (ISO 100, 1/60 s, f/4)
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float KeyLux = 3000.f;
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float FillLux = 700.f;
+	/** Ambient light on the fabric (luminance of a white surface, cd/m2): the room's bounce light. */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float Ambient = 120.f;
+	/** Strength of the soft drape folds shaded into every fabric (times each garment's own Fold). */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") float FoldGain = 2.2f;
+	/** CameraFeed: light the garments like the room in the camera image (its brightness and colour cast), not at a fixed studio level. */
+	UPROPERTY(EditAnywhere, Category = "ReflectAR|Look") bool bMatchRoomLight = true;
+	FLinearColor RoomLight = FLinearColor(1.f, 1.f, 1.f, 1.f);      // what the lights are multiplied by, eased
+
+	// ---- state the HUD draws
+	ReflectAR::FTrackingClient* Client() const { return Tracking.Get(); }
+	const ReflectAR::FBodyRig& Body() const { return Rig; }
+	int32 Current = 0, Selected = -1;
+	/** Live swipe feedback: how far the user's hand has carried the carousel toward the next (+)
+	 *  or previous (-) garment, -1..1. 0 when no swipe is under way; it returns to 0 when a swipe
+	 *  completes (Current changes then) or is abandoned. */
+	float BrowseDrag = 0.f;
+	/** Which hand is swiping ("left" / "right"), or empty. */
+	FString BrowseHand;
+	/** Direction (+1 next, -1 previous) and local time of the last garment change. */
+	int32 LastBrowseDir = 0;
+	double LastBrowseTime = -10;
+	bool bTracked = false;
+	FString LatencyLine;
+	FString ToastText;
+	double ToastTime = -10;
+	float ScaleAdjust = 1.f;                       // mirror calibration: picture size on top of screen.picture_scale
+	FString CalibText;                             // the mirror calibration's current value, shown for a few seconds
+	double CalibTime = -10;
+	float RenderFps = 0;
+	const FMirrorView& View() const { return MirrorView; }
+	/** Body point (unreflected) -> screen pixels, or false if behind the camera. */
+	bool BodyToScreen(const ReflectAR::V3& P, const FVector2D& ViewportSize, FVector2D& Out) const;
+	UTexture2D* Swatch(int32 I) const;
+
+	virtual void Tick(float DeltaSeconds) override;
+
+protected:
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+
+private:
+	struct FGarmentSlot
+	{
+		TUniquePtr<ReflectAR::FClothGarment> Sim;
+		UProceduralMeshComponent* Mesh = nullptr;
+		UProceduralMeshComponent* Trims = nullptr;
+		UMaterialInstanceDynamic* Opaque[4] = {};   // fabric, plastic, metal, ribbed knit
+		UMaterialInstanceDynamic* Fade[4] = {};
+		int bFading = -1;
+		bool bHasTrims = false;
+	};
+
+	UPROPERTY() USceneComponent* MirrorWorld = nullptr;
+	UPROPERTY() UProceduralMeshComponent* ProxyMesh = nullptr;
+	UPROPERTY() UProceduralMeshComponent* FeedQuad = nullptr;
+	UPROPERTY() UStaticMeshComponent* Cube = nullptr;
+	UPROPERTY() UDirectionalLightComponent* KeyLight = nullptr;
+	UPROPERTY() UDirectionalLightComponent* FillLight = nullptr;
+	UPROPERTY() UPostProcessComponent* PostProcess = nullptr;
+	UPROPERTY() TArray<TObjectPtr<UObject>> Keep;          // components and materials owned here
+	UPROPERTY() UMaterialParameterCollection* Params = nullptr;
+	UPROPERTY() UMaterialInstanceDynamic* ProxyMat = nullptr;
+	UPROPERTY() UMaterialInstanceDynamic* FeedMat = nullptr;
+
+	TUniquePtr<ReflectAR::FTrackingClient> Tracking;
+	ReflectAR::FBodyRig Rig;
+	ReflectAR::FBodyShape Shape;
+	ReflectAR::FBodyProxy Proxy;
+	ReflectAR::V3 MaskJoints[ReflectAR::LM::Count];
+	TArray<FGarmentSlot> Garments;
+	bool bProxyCreated = false, bFeedCreated = false;
+	float Visible = 0.f;
+	bool bHadBody = false;
+	double LastTracked = -10;
+	FMirrorView MirrorView;
+	double StatT = 0; float StatWorst = 0, StatSum = 0, StatCloth = 0; int StatN = 0, StatRebuilds = 0;
+
+	UMaterialInterface* LoadMat(const TCHAR* Name) const;
+	void CreateGarments();
+	void HandleInput();
+	void Browse(int D);
+	void Select();
+	void Toast(const FString& S) { ToastText = S; ToastTime = ReflectAR::FTrackingClient::Now(); }
+	void UploadGarment(FGarmentSlot& G);
+	void ApplyMaterials(FGarmentSlot& G, float Alpha);
+	void UpdateProxy(bool bOn, bool bMaskOn);
+	void UpdateFeedQuad();
+	void UpdateCamera();
+	void SetParams(bool bMaskOn);
+	void LogStats(float Dt);
+	void DevTick(double NowT);
+	float DevShotEvery = -1.f, DevCycleEvery = 0.f;
+	double DevNextShot = 0, DevNextCycle = 0;
+	int32 DevShots = 0;
+
+	// ---- latency test: the render thread logs the first present after each new perception frame
+	struct FLatencyLog;
+	TSharedPtr<FLatencyLog, ESPMode::ThreadSafe> LatLog;
+	FDelegateHandle PresentHandle;
+	int32 LatLastSeq = -1;
+	bool bPredictBeforeTest = true;
+	void SetLatencyTest(bool bOn);
+	void LatencyTick();
+};

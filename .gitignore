@@ -1,3 +1,22 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+perception/models/cache/
+
+# Unreal (see also unreal/.gitignore)
+unreal/Build/
+
+# setup scripts
+unreal/build.log
+
+# test runs (run_latency_test.sh, run_shoulder_test.sh)
+test_runs/
+
+# ---- from team repo template ----
 # Prerequisites
 *.d
 
